@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Intake</title>
+</head>
+<body>
+  <h1>Intake</h1>
+  <form id="upload-form" enctype="multipart/form-data">
+    <input type="file" name="files" multiple />
+    <button type="submit">Upload</button>
+  </form>
+
+  <button id="nc-test">Test Nextcloud</button>
+  <pre id="nc-result"></pre>
+
+  <input id="qr-text" type="text" placeholder="QR Text" />
+  <button id="qr-gen">QR generieren</button>
+  <br />
+  <img id="qr-img" alt="QR" />
+
+  <script>
+    const uploadForm = document.getElementById('upload-form');
+    uploadForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const data = new FormData(uploadForm);
+      const res = await fetch('/intake', { method: 'POST', body: data });
+      alert(JSON.stringify(await res.json()));
+    });
+
+    document.getElementById('nc-test').addEventListener('click', async () => {
+      const res = await fetch('/nc/ping');
+      const txt = await res.text();
+      document.getElementById('nc-result').textContent = txt;
+    });
+
+    document.getElementById('qr-gen').addEventListener('click', () => {
+      const text = encodeURIComponent(document.getElementById('qr-text').value);
+      document.getElementById('qr-img').src = '/qr?text=' + text;
+    });
+  </script>
+</body>
+</html>
