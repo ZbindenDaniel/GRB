@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GRB — Procedural Flow Field</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="layout">
+    <header class="hero">
+      <div class="headline">
+        <p class="eyebrow">GRB · Procedural Animation Sandbox</p>
+        <h1>Flow fields for playful tinkering</h1>
+        <p class="lede">
+          A minimal canvas playground that paints particle trails through a shifting flow field.
+          Use it as a starting point for animation experiments and simulations.
+        </p>
+      </div>
+      <div class="controls" aria-live="polite">
+        <p>Particles continuously move with a noise-driven velocity field. Refresh to regenerate.</p>
+      </div>
+    </header>
+    <section class="canvas-panel">
+      <canvas id="flow-canvas" aria-label="Procedural flow field animation"></canvas>
+    </section>
+  </main>
+  <script type="module" src="scripts/main.js"></script>
+</body>
+</html>
