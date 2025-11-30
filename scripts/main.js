@@ -15,11 +15,13 @@ const state = {
   boids: [],
   foods: [],
   bestPerformer: null,
+  foodSpawnAccumulator: 0,
   settings: {
     boidCount: 420,
     trail: 0.08,
     speedMultiplier: 1,
     foodCount: 22,
+    foodSpawnPerMinute: 120,
     foodRespawnDelaySeconds: 1.8,
     foodDecayRate: 0.002,
     foodReward: 1.2,
@@ -375,13 +377,21 @@ function adjustFoodCount(nextCount) {
 
 function decayFood() {
   const { foodDecayRate } = state.settings;
-  state.foods = state.foods.map((food) => {
-    const nextValue = Math.max(0, food.value - foodDecayRate);
-    if (nextValue === 0) {
-      return scheduleFoodRespawn(food, 'decay');
-    }
-    return { ...food, value: nextValue };
-  });
+
+  try {
+    state.foods = state.foods.map((food) => {
+      if (food.value <= 0) return food;
+
+      const nextValue = Math.max(0, food.value - foodDecayRate);
+      if (nextValue <= 0) {
+        log('Food fully depleted, scheduling respawn', { previousValue: food.value.toFixed(3) });
+        return scheduleFoodRespawn(food, 'decay');
+      }
+      return { ...food, value: nextValue };
+    });
+  } catch (error) {
+    console.error('[boids] Failed to decay food', error);
+  }
 }
 
 function drawFood(food) {
@@ -495,7 +505,18 @@ function tickFoodRespawn(deltaSeconds) {
     state.foods = state.foods.map((food) => {
       if (food.value > 0) return food;
 
-      const nextTimer = Math.max(0, (food.respawnTimer ?? state.settings.foodRespawnDelaySeconds) - deltaSeconds);
+      const currentTimer = Number.isFinite(food.respawnTimer)
+        ? food.respawnTimer
+        : state.settings.foodRespawnDelaySeconds;
+
+      if (!Number.isFinite(currentTimer)) {
+        log('Food respawn timer invalid, resetting to default', {
+          receivedTimer: food.respawnTimer,
+          fallback: state.settings.foodRespawnDelaySeconds,
+        });
+      }
+
+      const nextTimer = Math.max(0, currentTimer - deltaSeconds);
       if (nextTimer > 0) {
         return { ...food, respawnTimer: nextTimer };
       }
@@ -506,6 +527,49 @@ function tickFoodRespawn(deltaSeconds) {
     });
   } catch (error) {
     console.error('[boids] Failed to process food respawn timers', error);
+  }
+}
+
+function tickFoodSpawn(deltaSeconds) {
+  try {
+    const spawnPerMinute = Math.max(0, state.settings.foodSpawnPerMinute);
+    const spawnPerSecond = spawnPerMinute / 60;
+    const safeDelta = Math.max(0, deltaSeconds);
+    state.foodSpawnAccumulator += spawnPerSecond * safeDelta;
+
+    const maxFood = Math.max(state.settings.foodCount, Math.ceil(spawnPerMinute * 2));
+    if (state.foods.length >= maxFood) {
+      state.foodSpawnAccumulator = 0;
+      return;
+    }
+
+    const toSpawn = Math.min(Math.floor(state.foodSpawnAccumulator), maxFood - state.foods.length);
+    if (toSpawn <= 0) return;
+
+    state.foodSpawnAccumulator -= toSpawn;
+    const additions = Array.from({ length: toSpawn }, () => createFood());
+    state.foods.push(...additions);
+    log('Continuous food spawn', { added: toSpawn, total: state.foods.length, spawnPerMinute });
+  } catch (error) {
+    console.error('[boids] Failed continuous food spawning', error);
+  }
+}
+
+function getAvailableFoodStats() {
+  try {
+    return state.foods.reduce(
+      (acc, food) => {
+        if (food.value > 0) {
+          acc.count += 1;
+          acc.totalValue += food.value;
+        }
+        return acc;
+      },
+      { count: 0, totalValue: 0 },
+    );
+  } catch (error) {
+    console.error('[boids] Failed to derive food stats', error);
+    return { count: 0, totalValue: 0 };
   }
 }
 
@@ -572,12 +636,23 @@ function tryFoodBasedReproduction(boid, nextBoids) {
     const energyCost = Math.max(peacefulReproductionCost * multiplier, requiredFood * foodReward);
     const hasCollectedEnoughFood = boid.foodCollected >= requiredFood;
     const hasEnergyForOffspring = boid.energy >= energyCost;
+    const { count: availableFoodCount, totalValue: availableFoodValue } = getAvailableFoodStats();
+    const enoughFoodInWorld = availableFoodCount > 0 && availableFoodValue >= requiredFood * 0.5;
     const framesSinceLastReproduction = state.frame - boid.lastReproductionFrame;
     const cooldownFrames = Math.ceil(reproductionCooldownSeconds * 60);
 
     if (framesSinceLastReproduction < cooldownFrames) return;
 
-    if (!hasCollectedEnoughFood || !hasEnergyForOffspring) return;
+    if (!hasCollectedEnoughFood || !hasEnergyForOffspring || !enoughFoodInWorld) {
+      if (!enoughFoodInWorld) {
+        log('Reproduction blocked by food scarcity', {
+          availableFoodCount,
+          availableFoodValue: availableFoodValue.toFixed(2),
+          requiredFood: requiredFood.toFixed(2),
+        });
+      }
+      return;
+    }
 
     const offspring = createBoid({
       x: boid.x + (Math.random() - 0.5) * 8,
@@ -599,6 +674,7 @@ function tryFoodBasedReproduction(boid, nextBoids) {
       energyCost: energyCost.toFixed(2),
       framesSinceLastReproduction,
       cooldownFrames,
+      enoughFoodInWorld,
       offspringAggression: offspring.aggression.toFixed(2),
     });
   } catch (error) {
@@ -607,6 +683,11 @@ function tryFoodBasedReproduction(boid, nextBoids) {
 }
 
 function spawnFromBest() {
+  const { count: availableFoodCount, totalValue: availableFoodValue } = getAvailableFoodStats();
+  if (availableFoodCount === 0 || availableFoodValue <= 0) {
+    log('Boid spawn skipped due to lack of food');
+    return null;
+  }
   const baseGenome = state.bestPerformer?.genome ?? randomGenome();
   const genome = mutateGenome(baseGenome);
   const velocityJitter = (Math.random() - 0.5) * 0.5;
@@ -662,6 +743,7 @@ function step(timestamp) {
 
     decayFood();
     tickFoodRespawn(deltaSeconds);
+    tickFoodSpawn(deltaSeconds);
     state.foods.forEach((food) => drawFood(food));
 
     const nextBoids = [];
@@ -705,7 +787,10 @@ function step(timestamp) {
           reason,
           foodNeedMultiplier: consumptionMultiplier.toFixed(2),
         });
-        nextBoids.push(spawnFromBest());
+        const replacement = spawnFromBest();
+        if (replacement) {
+          nextBoids.push(replacement);
+        }
         continue;
       }
 
@@ -748,15 +833,32 @@ function renderControls() {
         </div>
         <input id="food-count" type="range" min="6" max="120" step="2" value="${state.settings.foodCount}" data-control="foodCount" />
       </div>
+      <div class="slider">
+        <div class="slider__header">
+          <label for="food-spawn-rate">Food spawn rate</label>
+          <span class="slider__value" data-output="foodSpawnPerMinute">${state.settings.foodSpawnPerMinute}/min</span>
+        </div>
+        <input
+          id="food-spawn-rate"
+          type="range"
+          min="0"
+          max="500"
+          step="10"
+          value="${state.settings.foodSpawnPerMinute}"
+          data-control="foodSpawnPerMinute"
+        />
+      </div>
       <p>Parameters evolve automatically—watch colors shift as separation (red), cohesion (green), and alignment (blue) adapt.</p>
     `;
 
     const boidInput = container.querySelector('[data-control="boidCount"]');
     const speedInput = container.querySelector('[data-control="speedMultiplier"]');
     const foodInput = container.querySelector('[data-control="foodCount"]');
+    const foodSpawnInput = container.querySelector('[data-control="foodSpawnPerMinute"]');
     const boidOutput = container.querySelector('[data-output="boidCount"]');
     const speedOutput = container.querySelector('[data-output="speedMultiplier"]');
     const foodOutput = container.querySelector('[data-output="foodCount"]');
+    const foodSpawnOutput = container.querySelector('[data-output="foodSpawnPerMinute"]');
 
     boidInput?.addEventListener('input', (event) => {
       const value = Number.parseInt(event.target.value, 10);
@@ -782,6 +884,14 @@ function renderControls() {
       foodOutput.textContent = value;
       adjustFoodCount(value);
       log('Food count changed', { value });
+    });
+
+    foodSpawnInput?.addEventListener('input', (event) => {
+      const value = Number.parseInt(event.target.value, 10);
+      if (Number.isNaN(value)) return;
+      state.settings.foodSpawnPerMinute = value;
+      foodSpawnOutput.textContent = `${value}/min`;
+      log('Food spawn rate changed', { perMinute: value });
     });
 
     log('Control panel rendered');
