@@ -15,7 +15,6 @@ const state = {
   boids: [],
   foods: [],
   bestPerformer: null,
-  pendingFoodSpawns: [],
   settings: {
     boidCount: 420,
     trail: 0.08,
@@ -115,38 +114,6 @@ function deriveAggression(genome) {
   );
   const aggression = separationScore * alignmentPenalty;
   return Math.min(1, Math.max(0, aggression));
-}
-
-function queueFoodSpawn(position) {
-  if (!position) return;
-  state.pendingFoodSpawns.push(position);
-  log('Food spawn queued from death', position);
-}
-
-function spawnDeathFood(position) {
-  try {
-    queueFoodSpawn(position);
-    const nextFood = createFood();
-
-    if (state.foods.length === 0) {
-      state.foods.push(nextFood);
-      return;
-    }
-
-    if (state.foods.length >= state.settings.foodCount) {
-      let weakestIndex = 0;
-      for (let i = 1; i < state.foods.length; i += 1) {
-        if (state.foods[i].value < state.foods[weakestIndex].value) {
-          weakestIndex = i;
-        }
-      }
-      state.foods[weakestIndex] = nextFood;
-    } else {
-      state.foods.push(nextFood);
-    }
-  } catch (error) {
-    console.error('[boids] Failed to spawn death food', error);
-  }
 }
 
 function createBoid(base = {}) {
@@ -349,7 +316,7 @@ function drawBoid(boid) {
 }
 
 function createFood(position) {
-  const fallbackPosition = position ?? state.pendingFoodSpawns.shift();
+  const fallbackPosition = position ?? null;
   const location = fallbackPosition ?? {
     x: Math.random() * canvas.clientWidth,
     y: Math.random() * canvas.clientHeight,
@@ -504,8 +471,6 @@ function tryAggressiveAttack(boid, index, eliminated) {
 
     const target = state.boids[targetIndex];
     eliminated.add(targetIndex);
-    spawnDeathFood({ x: target.x, y: target.y });
-
     const bite = foodReward * boid.aggression + aggressionEnergyBonus;
     boid.energy += bite;
     boid.score += bite;
@@ -632,7 +597,6 @@ function step() {
       tryAggressiveAttack(boid, index, eliminated);
 
       if (shouldBoidDie(boid)) {
-        spawnDeathFood({ x, y });
         log('Boid removed', { frame: state.frame, score: boid.score.toFixed(2) });
         nextBoids.push(spawnFromBest());
         continue;
