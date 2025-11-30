@@ -30,6 +30,8 @@ const state = {
     lonelyDeathChance: 0.008,
     mutationRate: 0.26,
     mutationScale: 0.18,
+    aggressionThreshold: 0.18,
+    aggressionEnergyBonus: 0.4,
   },
   frame: 0,
 };
@@ -95,6 +97,21 @@ function deriveBoidColor(genome) {
   return `rgba(${r}, ${g}, ${b}, 0.9)`;
 }
 
+function deriveAggression(genome) {
+  const separationScore = normalized(
+    genome.separationWeight,
+    genomeRanges.separationWeight.min,
+    genomeRanges.separationWeight.max,
+  );
+  const alignmentPenalty = 1 - normalized(
+    genome.alignmentWeight,
+    genomeRanges.alignmentWeight.min,
+    genomeRanges.alignmentWeight.max,
+  );
+  const aggression = separationScore * alignmentPenalty;
+  return Math.min(1, Math.max(0, aggression));
+}
+
 function queueFoodSpawn(position) {
   if (!position) return;
   state.pendingFoodSpawns.push(position);
@@ -143,6 +160,7 @@ function createBoid(base = {}) {
     lastNeighborCount: 0,
     genome,
     color: deriveBoidColor(genome),
+    aggression: deriveAggression(genome),
   };
 }
 
@@ -262,17 +280,35 @@ function steerBoid(boid, index) {
 function drawBoid(boid) {
   const size = 6;
   const angle = Math.atan2(boid.vy, boid.vx);
-  ctx.save();
-  ctx.translate(boid.x, boid.y);
-  ctx.rotate(angle);
-  ctx.beginPath();
-  ctx.strokeStyle = boid.color;
-  ctx.moveTo(size, 0);
-  ctx.lineTo(-size * 0.8, size * 0.6);
-  ctx.lineTo(-size * 0.8, -size * 0.6);
-  ctx.closePath();
-  ctx.stroke();
-  ctx.restore();
+  const isPeaceful = boid.aggression <= state.settings.aggressionThreshold;
+
+  try {
+    ctx.save();
+    ctx.translate(boid.x, boid.y);
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.strokeStyle = boid.color;
+
+    if (isPeaceful) {
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.moveTo(size, 0);
+      ctx.quadraticCurveTo(-size * 0.2, size * 0.6, -size * 0.8, size * 0.4);
+      ctx.quadraticCurveTo(-size, 0, -size * 0.8, -size * 0.4);
+      ctx.quadraticCurveTo(-size * 0.2, -size * 0.6, size, 0);
+    } else {
+      ctx.moveTo(size, 0);
+      ctx.lineTo(-size * 0.8, size * 0.6);
+      ctx.lineTo(-size * 0.8, -size * 0.6);
+      ctx.closePath();
+    }
+
+    ctx.stroke();
+  } catch (error) {
+    console.error('[boids] Failed to draw boid', error);
+  } finally {
+    ctx.restore();
+  }
 }
 
 function createFood(position) {
@@ -401,6 +437,47 @@ function tryConsumeFood(boid) {
   }
 }
 
+function tryAggressiveAttack(boid, index, eliminated) {
+  const { aggressionThreshold, foodReward, aggressionEnergyBonus } = state.settings;
+  if (boid.aggression <= aggressionThreshold) return;
+
+  try {
+    const attackRadius = Math.max(10, boid.genome.perception * 0.22);
+    let targetIndex = -1;
+    let closestDistance = Number.POSITIVE_INFINITY;
+
+    for (let i = index + 1; i < state.boids.length; i += 1) {
+      if (i === index || eliminated.has(i)) continue;
+      const target = state.boids[i];
+      const dx = target.x - boid.x;
+      const dy = target.y - boid.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0 && dist < attackRadius && dist < closestDistance) {
+        closestDistance = dist;
+        targetIndex = i;
+      }
+    }
+
+    if (targetIndex === -1) return;
+
+    const target = state.boids[targetIndex];
+    eliminated.add(targetIndex);
+    spawnDeathFood({ x: target.x, y: target.y });
+
+    const bite = foodReward * boid.aggression + aggressionEnergyBonus;
+    boid.energy += bite;
+    boid.score += bite;
+    trackBestPerformer(boid);
+    log('Aggressive attack executed', {
+      attacker: index,
+      target: targetIndex,
+      aggression: boid.aggression.toFixed(2),
+    });
+  } catch (error) {
+    console.error('[boids] Failed aggression handling', error);
+  }
+}
+
 function spawnFromBest() {
   const baseGenome = state.bestPerformer?.genome ?? randomGenome();
   const genome = mutateGenome(baseGenome);
@@ -446,7 +523,12 @@ function step() {
 
     const nextBoids = [];
 
+    const eliminated = new Set();
+
     for (let index = 0; index < state.boids.length; index += 1) {
+      if (eliminated.has(index)) {
+        continue;
+      }
       const boid = state.boids[index];
       const { x, y } = boid;
       const { x: ax, y: ay, neighborCount } = steerBoid(boid, index);
@@ -469,6 +551,7 @@ function step() {
       else if (boid.y > h) boid.y = 0;
 
       tryConsumeFood(boid);
+      tryAggressiveAttack(boid, index, eliminated);
 
       if (shouldBoidDie(boid)) {
         spawnDeathFood({ x, y });
