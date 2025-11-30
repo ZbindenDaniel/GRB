@@ -247,7 +247,7 @@ function steerToFood(boid) {
 
   try {
     for (let i = 0; i < state.foods.length; i += 1) {
-      const food = boid.aggression <= aggressionThreshold ? state.foods[i] : state.boids();
+      const food = boid.aggression <= aggressionThreshold ? state.foods[i] : state.boids[i];
       const dx = food.x - boid.x;
       const dy = food.y - boid.y;
       const dist = Math.hypot(dx, dy);
