@@ -495,7 +495,18 @@ function tickFoodRespawn(deltaSeconds) {
     state.foods = state.foods.map((food) => {
       if (food.value > 0) return food;
 
-      const nextTimer = Math.max(0, (food.respawnTimer ?? state.settings.foodRespawnDelaySeconds) - deltaSeconds);
+      const currentTimer = Number.isFinite(food.respawnTimer)
+        ? food.respawnTimer
+        : state.settings.foodRespawnDelaySeconds;
+
+      if (!Number.isFinite(currentTimer)) {
+        log('Food respawn timer invalid, resetting to default', {
+          receivedTimer: food.respawnTimer,
+          fallback: state.settings.foodRespawnDelaySeconds,
+        });
+      }
+
+      const nextTimer = Math.max(0, currentTimer - deltaSeconds);
       if (nextTimer > 0) {
         return { ...food, respawnTimer: nextTimer };
       }
@@ -506,6 +517,15 @@ function tickFoodRespawn(deltaSeconds) {
     });
   } catch (error) {
     console.error('[boids] Failed to process food respawn timers', error);
+  }
+}
+
+function hasAvailableFood() {
+  try {
+    return state.foods.some((food) => food.value > 0);
+  } catch (error) {
+    console.error('[boids] Failed to evaluate available food', error);
+    return false;
   }
 }
 
@@ -607,6 +627,10 @@ function tryFoodBasedReproduction(boid, nextBoids) {
 }
 
 function spawnFromBest() {
+  if (!hasAvailableFood()) {
+    log('Boid spawn skipped due to lack of food');
+    return null;
+  }
   const baseGenome = state.bestPerformer?.genome ?? randomGenome();
   const genome = mutateGenome(baseGenome);
   const velocityJitter = (Math.random() - 0.5) * 0.5;
@@ -705,7 +729,10 @@ function step(timestamp) {
           reason,
           foodNeedMultiplier: consumptionMultiplier.toFixed(2),
         });
-        nextBoids.push(spawnFromBest());
+        const replacement = spawnFromBest();
+        if (replacement) {
+          nextBoids.push(replacement);
+        }
         continue;
       }
 
