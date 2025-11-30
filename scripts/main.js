@@ -48,7 +48,7 @@ const log = (message, extra = {}) => {
   console.info(`[boids] ${message}`, extra);
 };
 
-const PEACEFUL_AGGRESSIVE_SEPARATION_BOOST = 2.2;
+const PEACEFUL_AGGRESSIVE_SEPARATION_BOOST = 4;
 const AGGRESSION_ATTACK_RECOVERY_DURATION = 2;
 const AGGRESSION_ATTACK_SPEED_BREAK = 0.8;
 
@@ -251,7 +251,7 @@ function steerToFood(boid) {
       const dx = food.x - boid.x;
       const dy = food.y - boid.y;
       const dist = Math.hypot(dx, dy);
-      if (dist > 0 && dist <= foodPerception && dist > bestValue) {
+      if (dist > 0 && dist <= foodPerception && dist < bestValue) {
         target = { dx, dy, dist };
         bestValue = food.value;
       }
