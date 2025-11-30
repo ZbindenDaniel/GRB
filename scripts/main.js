@@ -203,6 +203,7 @@ function createBoid(base = {}) {
     score: 0,
     foodCollected: 0,
     lastNeighborCount: 0,
+    lastAggressiveNeighborCount: 0,
     lastReproductionFrame: -Infinity,
     attackRecoveryTimer: 0,
     genome,
@@ -273,6 +274,7 @@ function steerBoid(boid, index) {
   const { aggressionThreshold } = state.settings;
 
   let total = 0;
+  let aggressiveNeighborCount = 0;
   let steerSeparation = { x: 0, y: 0 };
   let steerAlignment = { x: 0, y: 0 };
   let steerCohesion = { x: 0, y: 0 };
@@ -288,6 +290,10 @@ function steerBoid(boid, index) {
       const invDist = 1 / dist;
       const isOtherAggressive = other.aggression > aggressionThreshold;
       const separationScale = isBoidPeaceful && isOtherAggressive ? PEACEFUL_AGGRESSIVE_SEPARATION_BOOST : 1;
+
+      if (isOtherAggressive) {
+        aggressiveNeighborCount += 1;
+      }
 
       steerSeparation.x -= dx * invDist * separationScale;
       steerSeparation.y -= dy * invDist * separationScale;
@@ -327,7 +333,7 @@ function steerBoid(boid, index) {
     steerCohesion.y * cohesionWeight;
 
   const limited = limitVector(ax, ay, maxForce);
-  return { ...limited, neighborCount: total };
+  return { ...limited, neighborCount: total, aggressiveNeighborCount };
 }
 
 function countNeighbors(targetIndex) {
@@ -370,10 +376,7 @@ function drawBoid(boid) {
     if (isPeaceful) {
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
-      ctx.moveTo(size, 0);
-      ctx.quadraticCurveTo(-size * 0.2, size * 0.6, -size * 0.8, size * 0.4);
-      ctx.quadraticCurveTo(-size, 0, -size * 0.8, -size * 0.4);
-      ctx.quadraticCurveTo(-size * 0.2, -size * 0.6, size, 0);
+      ctx.ellipse(0, 0, size * 1.05, size * 0.7, 0, 0, Math.PI * 2);
     } else {
       ctx.moveTo(size, 0);
       ctx.lineTo(-size * 0.8, size * 0.6);
@@ -773,22 +776,32 @@ function tryFoodBasedReproduction(boid, nextBoids) {
 }
 
 function shouldBoidDie(boid, deltaSeconds) {
-  const { minNeighborsForSafety, lonelyDeathChance, foodConsumptionPerSecond } = state.settings;
-  const consumptionMultiplier = foodNeedMultiplier(boid);
-  const effectiveDeltaSeconds = Math.max(deltaSeconds, 0.016);
-  const consumption = foodConsumptionPerSecond * consumptionMultiplier;
-  boid.energy -= consumption * effectiveDeltaSeconds;
-  if (boid.energy <= 0) {
-    return { dead: true, reason: 'starvation', consumptionMultiplier };
-  }
+  try {
+    const { minNeighborsForSafety, lonelyDeathChance, foodConsumptionPerSecond, aggressionThreshold } = state.settings;
+    const consumptionMultiplier = foodNeedMultiplier(boid);
+    const effectiveDeltaSeconds = Math.max(deltaSeconds, 0.016);
 
-  if (boid.lastNeighborCount < minNeighborsForSafety) {
-    const roll = Math.random();
-    if (roll < lonelyDeathChance) {
-      return { dead: true, reason: 'lonely death', consumptionMultiplier };
+    const aggressiveNeighborCount = Math.max(0, boid.lastAggressiveNeighborCount ?? 0);
+    const predatorReduction =
+      boid.aggression > aggressionThreshold ? Math.min(0.2, aggressiveNeighborCount * 0.05) : 0;
+
+    const consumption = foodConsumptionPerSecond * consumptionMultiplier * (1 - predatorReduction);
+    boid.energy -= consumption * effectiveDeltaSeconds;
+    if (boid.energy <= 0) {
+      return { dead: true, reason: 'starvation', consumptionMultiplier };
     }
+
+    if (boid.lastNeighborCount < minNeighborsForSafety) {
+      const roll = Math.random();
+      if (roll < lonelyDeathChance) {
+        return { dead: true, reason: 'lonely death', consumptionMultiplier };
+      }
+    }
+    return { dead: false, reason: null, consumptionMultiplier };
+  } catch (error) {
+    console.error('[boids] Failed mortality evaluation', error);
+    return { dead: false, reason: 'error', consumptionMultiplier: 1 };
   }
-  return { dead: false, reason: null, consumptionMultiplier };
 }
 
 function step(timestamp) {
@@ -833,10 +846,11 @@ function step(timestamp) {
       const boid = state.boids[index];
       boid.attackRecoveryTimer = Math.max(0, (boid.attackRecoveryTimer ?? 0) - deltaSeconds);
       const { x, y } = boid;
-      const { x: ax, y: ay, neighborCount } = steerBoid(boid, index);
+      const { x: ax, y: ay, neighborCount, aggressiveNeighborCount } = steerBoid(boid, index);
       const { x: foodAx, y: foodAy } = steerToFood(boid);
 
       boid.lastNeighborCount = neighborCount;
+      boid.lastAggressiveNeighborCount = aggressiveNeighborCount;
       boid.vx += ax + foodAx;
       boid.vy += ay + foodAy;
 
