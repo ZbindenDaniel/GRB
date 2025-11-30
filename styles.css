@@ -21,13 +21,15 @@ body {
   color: var(--text);
   font-family: var(--font);
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
-  padding: 24px;
+  padding: 0;
 }
 
 main.layout {
-  width: min(1100px, 100%);
+  width: 100%;
+  min-height: 100vh;
+  padding: 24px;
   display: grid;
   grid-template-columns: 1fr;
   gap: 18px;
@@ -180,7 +182,8 @@ main.layout {
   border-radius: var(--radius);
   overflow: hidden;
   box-shadow: var(--shadow);
-  height: 600px;
+  height: calc(100vh - 260px);
+  min-height: 520px;
 }
 
 #flow-canvas {
@@ -195,6 +198,7 @@ main.layout {
   }
 
   .canvas-panel {
-    height: 420px;
+    height: min(480px, calc(100vh - 180px));
+    min-height: 360px;
   }
 }
