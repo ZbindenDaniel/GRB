@@ -6,6 +6,7 @@ const genomeRanges = {
   separationWeight: { min: 0.6, max: 2.5 },
   alignmentWeight: { min: 0.5, max: 2.2 },
   cohesionWeight: { min: 0.5, max: 2.2 },
+  foodPerception: { min: 16, max: 180 },
   maxSpeed: { min: 0.8, max: 3.6 },
   maxForce: { min: 0.01, max: 0.08 },
 };
@@ -124,6 +125,34 @@ function limitVector(x, y, max) {
   return { x, y };
 }
 
+function steerToFood(boid) {
+  const { foodPerception, maxForce } = boid.genome;
+  let target = null;
+  let bestValue = 0;
+
+  try {
+    for (let i = 0; i < state.foods.length; i += 1) {
+      const food = state.foods[i];
+      const dx = food.x - boid.x;
+      const dy = food.y - boid.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0 && dist <= foodPerception && food.value > bestValue) {
+        target = { dx, dy, dist };
+        bestValue = food.value;
+      }
+    }
+
+    if (!target) return { x: 0, y: 0 };
+
+    const desiredX = target.dx / target.dist;
+    const desiredY = target.dy / target.dist;
+    return limitVector(desiredX, desiredY, maxForce);
+  } catch (error) {
+    console.error('[boids] Failed to steer toward food', error);
+    return { x: 0, y: 0 };
+  }
+}
+
 function steerBoid(boid, index) {
   const { perception, separationWeight, alignmentWeight, cohesionWeight, maxForce } = boid.genome;
   const { maxSpeed } = boid.genome;
@@ -210,6 +239,23 @@ function seedFood() {
   log('Food seeded', { count: state.foods.length });
 }
 
+function adjustFoodCount(nextCount) {
+  const current = state.foods.length;
+  if (nextCount === current) return;
+
+  try {
+    if (nextCount > current) {
+      const additions = Array.from({ length: nextCount - current }, () => createFood());
+      state.foods.push(...additions);
+    } else {
+      state.foods.length = nextCount;
+    }
+    log('Food count adjusted', { count: state.foods.length });
+  } catch (error) {
+    console.error('[boids] Failed to adjust food count', error);
+  }
+}
+
 function decayFood() {
   const { foodDecayRate } = state.settings;
   state.foods = state.foods.map((food) => {
@@ -222,7 +268,7 @@ function decayFood() {
 }
 
 function drawFood(food) {
-  const radius = 5 + food.value * 4;
+  const radius = 3 + food.value * 2;
   ctx.save();
   ctx.beginPath();
   ctx.fillStyle = `rgba(120, 255, 140, ${0.2 + food.value * 0.6})`;
@@ -242,12 +288,14 @@ function trackBestPerformer(boid) {
 
 function tryConsumeFood(boid) {
   const { foodReward, foodDepletionOnEat } = state.settings;
+  const { foodPerception } = boid.genome;
   let reward = 0;
+  const eatRadius = Math.max(6, Math.min(16, foodPerception * 0.12));
   state.foods = state.foods.map((food) => {
     const dx = food.x - boid.x;
     const dy = food.y - boid.y;
     const dist = Math.hypot(dx, dy);
-    if (dist < 14 && food.value > 0.05) {
+    if (dist < eatRadius && food.value > 0.05) {
       const bite = Math.min(food.value, foodDepletionOnEat);
       reward += bite * foodReward;
       const remaining = food.value - bite;
@@ -315,10 +363,11 @@ function step() {
       const boid = state.boids[index];
       const { x, y } = boid;
       const { x: ax, y: ay, neighborCount } = steerBoid(boid, index);
+      const { x: foodAx, y: foodAy } = steerToFood(boid);
 
       boid.lastNeighborCount = neighborCount;
-      boid.vx += ax;
-      boid.vy += ay;
+      boid.vx += ax + foodAx;
+      boid.vy += ay + foodAy;
 
       const limited = limitVector(boid.vx, boid.vy, boid.genome.maxSpeed * speedMultiplier);
       boid.vx = limited.x;
@@ -372,13 +421,22 @@ function renderControls() {
         </div>
         <input id="speed-scale" type="range" min="0.4" max="2.4" step="0.05" value="${state.settings.speedMultiplier}" data-control="speedMultiplier" />
       </div>
+      <div class="slider">
+        <div class="slider__header">
+          <label for="food-count">Food count</label>
+          <span class="slider__value" data-output="foodCount">${state.settings.foodCount}</span>
+        </div>
+        <input id="food-count" type="range" min="6" max="120" step="2" value="${state.settings.foodCount}" data-control="foodCount" />
+      </div>
       <p>Parameters evolve automatically—watch colors shift as separation (red), cohesion (green), and alignment (blue) adapt.</p>
     `;
 
     const boidInput = container.querySelector('[data-control="boidCount"]');
     const speedInput = container.querySelector('[data-control="speedMultiplier"]');
+    const foodInput = container.querySelector('[data-control="foodCount"]');
     const boidOutput = container.querySelector('[data-output="boidCount"]');
     const speedOutput = container.querySelector('[data-output="speedMultiplier"]');
+    const foodOutput = container.querySelector('[data-output="foodCount"]');
 
     boidInput?.addEventListener('input', (event) => {
       const value = Number.parseInt(event.target.value, 10);
@@ -395,6 +453,15 @@ function renderControls() {
       state.settings.speedMultiplier = value;
       speedOutput.textContent = `${value.toFixed(2)}×`;
       log('Speed multiplier changed', { value });
+    });
+
+    foodInput?.addEventListener('input', (event) => {
+      const value = Number.parseInt(event.target.value, 10);
+      if (Number.isNaN(value)) return;
+      state.settings.foodCount = value;
+      foodOutput.textContent = value;
+      adjustFoodCount(value);
+      log('Food count changed', { value });
     });
 
     log('Control panel rendered');
