@@ -533,33 +533,46 @@ function trackBestPerformer(boid) {
 }
 
 function tryConsumeFood(boid) {
-  const { foodReward, foodDepletionOnEat } = state.settings;
-  const { foodPerception } = boid.genome;
-  let reward = 0;
-  let consumed = 0;
-  const eatRadius = Math.max(6, Math.min(16, foodPerception * 0.12));
-  state.foods = state.foods.map((food) => {
-    const dx = food.x - boid.x;
-    const dy = food.y - boid.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < eatRadius && food.value > 0.05) {
-      const bite = Math.min(food.value, foodDepletionOnEat);
-      reward += bite * foodReward;
-      consumed += bite;
-      const remaining = food.value - bite;
-      if (remaining <= 0.02) {
-        return scheduleFoodRespawn(food, 'consumed');
-      }
-      return { ...food, value: remaining };
-    }
-    return food;
-  });
+  const { foodReward, foodDepletionOnEat, aggressionThreshold } = state.settings;
 
-  if (reward > 0) {
-    boid.energy += reward;
-    boid.score += reward;
-    boid.foodCollected += consumed;
-    trackBestPerformer(boid);
+  if (boid.aggression > aggressionThreshold) {
+    log('Food consumption skipped for aggressive boid', {
+      aggression: boid.aggression.toFixed(2),
+      aggressionThreshold: aggressionThreshold.toFixed(2),
+    });
+    return;
+  }
+
+  try {
+    const { foodPerception } = boid.genome;
+    let reward = 0;
+    let consumed = 0;
+    const eatRadius = Math.max(6, Math.min(16, foodPerception * 0.12));
+    state.foods = state.foods.map((food) => {
+      const dx = food.x - boid.x;
+      const dy = food.y - boid.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < eatRadius && food.value > 0.05) {
+        const bite = Math.min(food.value, foodDepletionOnEat);
+        reward += bite * foodReward;
+        consumed += bite;
+        const remaining = food.value - bite;
+        if (remaining <= 0.02) {
+          return scheduleFoodRespawn(food, 'consumed');
+        }
+        return { ...food, value: remaining };
+      }
+      return food;
+    });
+
+    if (reward > 0) {
+      boid.energy += reward;
+      boid.score += reward;
+      boid.foodCollected += consumed;
+      trackBestPerformer(boid);
+    }
+  } catch (error) {
+    console.error('[boids] Failed to process food consumption', error);
   }
 }
 
@@ -682,6 +695,7 @@ function tryAggressiveAttack(boid, index, eliminated) {
     const bite = foodReward * boid.aggression + aggressionEnergyBonus;
     boid.energy += bite;
     boid.score += bite;
+    boid.foodCollected += bite / foodReward;
     boid.attackRecoveryTimer = Math.max(
       boid.attackRecoveryTimer ?? 0,
       AGGRESSION_ATTACK_RECOVERY_DURATION,
@@ -693,6 +707,7 @@ function tryAggressiveAttack(boid, index, eliminated) {
       aggression: boid.aggression.toFixed(2),
       targetNeighbors: targetNeighborCount,
       speedBreak: AGGRESSION_ATTACK_SPEED_BREAK,
+      foodValueGained: (bite / foodReward).toFixed(2),
     });
   } catch (error) {
     console.error('[boids] Failed aggression handling', error);
@@ -711,8 +726,8 @@ function tryFoodBasedReproduction(boid, nextBoids) {
   } = state.settings;
 
   try {
-    const baseRequirement =
-      boid.aggression > aggressionThreshold ? aggressiveFoodForReproduction : peacefulFoodForReproduction;
+    const isAggressive = boid.aggression > aggressionThreshold;
+    const baseRequirement = isAggressive ? aggressiveFoodForReproduction : peacefulFoodForReproduction;
     const multiplier = foodNeedMultiplier(boid);
     const perceptionCost = reproductionCostMultiplier(boid);
     const requiredFood = baseRequirement * multiplier * perceptionCost;
@@ -723,14 +738,16 @@ function tryFoodBasedReproduction(boid, nextBoids) {
     const hasCollectedEnoughFood = boid.foodCollected >= requiredFood;
     const hasEnergyForOffspring = boid.energy - energyCost >= reproductionEnergyReserve;
     const { count: availableFoodCount, totalValue: availableFoodValue } = getAvailableFoodStats();
-    const enoughFoodInWorld = availableFoodCount > 0 && availableFoodValue >= requiredFood * 0.5;
+    const enoughFoodInWorld = isAggressive
+      ? true
+      : availableFoodCount > 0 && availableFoodValue >= requiredFood * 0.5;
     const framesSinceLastReproduction = state.frame - boid.lastReproductionFrame;
     const cooldownFrames = Math.ceil(reproductionCooldownSeconds * 60);
 
     if (framesSinceLastReproduction < cooldownFrames) return;
 
     if (!hasCollectedEnoughFood || !hasEnergyForOffspring || !enoughFoodInWorld) {
-      if (!enoughFoodInWorld) {
+      if (!enoughFoodInWorld && !isAggressive) {
         log('Reproduction blocked by food scarcity', {
           availableFoodCount,
           availableFoodValue: availableFoodValue.toFixed(2),
