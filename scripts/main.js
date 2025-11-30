@@ -362,6 +362,29 @@ function seedFood() {
   log('Food seeded', { count: state.foods.length });
 }
 
+function restartSimulation() {
+  try {
+    state.boids = [];
+    state.foods = [];
+    state.bestPerformer = null;
+    state.foodSpawnAccumulator = 0;
+    state.frame = 0;
+    state.lastFrameTimestamp = null;
+
+    seedBoids();
+    seedFood();
+    updateBestPerformerPanel();
+
+    log('Simulation restarted', {
+      boidCount: state.settings.boidCount,
+      foodCount: state.settings.foodCount,
+      initialEnergy: state.settings.initialEnergy,
+    });
+  } catch (error) {
+    console.error('[boids] Failed to restart simulation', error);
+  }
+}
+
 function adjustFoodCount(nextCount) {
   const current = state.foods.length;
   if (nextCount === current) return;
@@ -919,6 +942,13 @@ function renderControls() {
 
     container.innerHTML = `
       ${controls.map((control) => buildInput(control)).join('')}
+      <div class="control control--actions">
+        <div class="control__header">
+          <span>Simulation lifecycle</span>
+        </div>
+        <button type="button" class="button" data-restart>Restart with current settings</button>
+        <p class="control__hint">Apply parameter changes by reseeding the swarm and food field.</p>
+      </div>
       <p>
         Parameters evolve automatically—watch colors shift as separation (red), cohesion (green), alignment (blue), and
         reproduction pressure adapt.
@@ -947,6 +977,15 @@ function renderControls() {
           console.error('[boids] Control update failed', error);
         }
       });
+    });
+
+    const restartButton = container.querySelector('[data-restart]');
+    restartButton?.addEventListener('click', () => {
+      try {
+        restartSimulation();
+      } catch (error) {
+        console.error('[boids] Restart action failed', error);
+      }
     });
 
     log('Control panel rendered');
