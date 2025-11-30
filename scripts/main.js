@@ -20,6 +20,7 @@ const state = {
     trail: 0.08,
     speedMultiplier: 1,
     foodCount: 22,
+    foodRespawnDelaySeconds: 1.8,
     foodDecayRate: 0.002,
     foodReward: 1.2,
     foodDepletionOnEat: 0.5,
@@ -346,6 +347,7 @@ function createFood(position) {
   return {
     ...location,
     value: 1,
+    respawnTimer: 0,
   };
 }
 
@@ -376,13 +378,14 @@ function decayFood() {
   state.foods = state.foods.map((food) => {
     const nextValue = Math.max(0, food.value - foodDecayRate);
     if (nextValue === 0) {
-      return createFood();
+      return scheduleFoodRespawn(food, 'decay');
     }
     return { ...food, value: nextValue };
   });
 }
 
 function drawFood(food) {
+  if (food.value <= 0) return;
   const radius = 3 + food.value * 2;
   ctx.save();
   ctx.beginPath();
@@ -460,7 +463,7 @@ function tryConsumeFood(boid) {
       consumed += bite;
       const remaining = food.value - bite;
       if (remaining <= 0.02) {
-        return createFood();
+        return scheduleFoodRespawn(food, 'consumed');
       }
       return { ...food, value: remaining };
     }
@@ -472,6 +475,37 @@ function tryConsumeFood(boid) {
     boid.score += reward;
     boid.foodCollected += consumed;
     trackBestPerformer(boid);
+  }
+}
+
+function scheduleFoodRespawn(food, reason) {
+  try {
+    const { foodRespawnDelaySeconds } = state.settings;
+    const delay = Math.max(0, foodRespawnDelaySeconds);
+    log('Food slot scheduled for respawn', { reason, delay });
+    return { ...food, value: 0, respawnTimer: delay };
+  } catch (error) {
+    console.error('[boids] Failed to schedule food respawn', error);
+    return { ...food, value: 0, respawnTimer: 0.5 };
+  }
+}
+
+function tickFoodRespawn(deltaSeconds) {
+  try {
+    state.foods = state.foods.map((food) => {
+      if (food.value > 0) return food;
+
+      const nextTimer = Math.max(0, (food.respawnTimer ?? state.settings.foodRespawnDelaySeconds) - deltaSeconds);
+      if (nextTimer > 0) {
+        return { ...food, respawnTimer: nextTimer };
+      }
+
+      const respawned = createFood();
+      log('Food respawned', { frame: state.frame });
+      return respawned;
+    });
+  } catch (error) {
+    console.error('[boids] Failed to process food respawn timers', error);
   }
 }
 
@@ -627,6 +661,7 @@ function step(timestamp) {
     ctx.strokeStyle = 'rgba(110, 199, 255, 0.86)';
 
     decayFood();
+    tickFoodRespawn(deltaSeconds);
     state.foods.forEach((food) => drawFood(food));
 
     const nextBoids = [];
