@@ -23,7 +23,7 @@ const state = {
     foodDecayRate: 0.002,
     foodReward: 1.2,
     foodDepletionOnEat: 0.5,
-    starvationRate: 0.003,
+    foodConsumptionPerSecond: 0.2,
     initialEnergy: 1.0,
     minNeighborsForSafety: 2,
     lonelyDeathChance: 0.008,
@@ -31,12 +31,12 @@ const state = {
     mutationScale: 0.18,
     aggressionThreshold: 0.18,
     aggressionEnergyBonus: 0.4,
-    peacefulReproductionEnergy: 1.35,
+    peacefulFoodForReproduction: 2,
+    aggressiveFoodForReproduction: 3,
     peacefulReproductionCost: 0.55,
-    foodForReproduction: 2.4,
-    aggressiveReproductionFoodMultiplier: 1.6,
   },
   frame: 0,
+  lastFrameTimestamp: null,
 };
 
 const log = (message, extra = {}) => {
@@ -44,6 +44,25 @@ const log = (message, extra = {}) => {
 };
 
 const PEACEFUL_AGGRESSIVE_SEPARATION_BOOST = 2.2;
+
+function foodNeedMultiplier(boid) {
+  try {
+    const speedNormalized = normalized(
+      boid.genome.maxSpeed,
+      genomeRanges.maxSpeed.min,
+      genomeRanges.maxSpeed.max,
+    );
+    const perceptionNormalized = normalized(
+      boid.genome.perception,
+      genomeRanges.perception.min,
+      genomeRanges.perception.max,
+    );
+    return 1 + (speedNormalized + perceptionNormalized) * 0.5;
+  } catch (error) {
+    console.error('[boids] Failed to derive food need multiplier', error);
+    return 1;
+  }
+}
 
 function resizeCanvas() {
   const parent = canvas.parentElement;
@@ -501,19 +520,15 @@ function tryAggressiveAttack(boid, index, eliminated) {
 }
 
 function tryFoodBasedReproduction(boid, nextBoids) {
-  const {
-    aggressionThreshold,
-    peacefulReproductionEnergy,
-    peacefulReproductionCost,
-    foodForReproduction,
-    aggressiveReproductionFoodMultiplier,
-  } = state.settings;
+  const { aggressionThreshold, peacefulFoodForReproduction, aggressiveFoodForReproduction, peacefulReproductionCost } =
+    state.settings;
 
   try {
-    const aggressionMultiplier = boid.aggression > aggressionThreshold ? aggressiveReproductionFoodMultiplier : 1;
-    const requiredFood = foodForReproduction * aggressionMultiplier;
+    const baseRequirement =
+      boid.aggression > aggressionThreshold ? aggressiveFoodForReproduction : peacefulFoodForReproduction;
+    const requiredFood = baseRequirement * foodNeedMultiplier(boid);
     const hasCollectedEnoughFood = boid.foodCollected >= requiredFood;
-    const hasEnergyForOffspring = boid.energy >= peacefulReproductionEnergy + peacefulReproductionCost;
+    const hasEnergyForOffspring = boid.energy >= peacefulReproductionCost;
 
     if (!hasCollectedEnoughFood || !hasEnergyForOffspring) return;
 
@@ -531,6 +546,8 @@ function tryFoodBasedReproduction(boid, nextBoids) {
       frame: state.frame,
       parentEnergy: boid.energy.toFixed(2),
       parentFoodCollected: boid.foodCollected.toFixed(2),
+      baseFoodRequired: baseRequirement.toFixed(2),
+      foodNeedMultiplier: foodNeedMultiplier(boid).toFixed(2),
       requiredFood: requiredFood.toFixed(2),
       offspringAggression: offspring.aggression.toFixed(2),
     });
@@ -552,28 +569,41 @@ function spawnFromBest() {
   return boid;
 }
 
-function shouldBoidDie(boid) {
-  const { minNeighborsForSafety, lonelyDeathChance, starvationRate } = state.settings;
-  boid.energy -= starvationRate;
+function shouldBoidDie(boid, deltaSeconds) {
+  const { minNeighborsForSafety, lonelyDeathChance, foodConsumptionPerSecond } = state.settings;
+  const consumptionMultiplier = foodNeedMultiplier(boid);
+  const consumption = foodConsumptionPerSecond * consumptionMultiplier;
+  boid.energy -= consumption * deltaSeconds;
   if (boid.energy <= 0) {
-    return true;
+    return { dead: true, reason: 'starvation', consumptionMultiplier };
   }
 
   if (boid.lastNeighborCount < minNeighborsForSafety) {
     const roll = Math.random();
     if (roll < lonelyDeathChance) {
-      return true;
+      return { dead: true, reason: 'lonely death', consumptionMultiplier };
     }
   }
-  return false;
+  return { dead: false, reason: null, consumptionMultiplier };
 }
 
-function step() {
+function step(timestamp) {
   try {
     const { trail, speedMultiplier } = state.settings;
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     state.frame += 1;
+
+    const deltaSeconds = (() => {
+      if (state.lastFrameTimestamp === null) {
+        state.lastFrameTimestamp = timestamp ?? performance.now();
+        return 0;
+      }
+      const currentTimestamp = timestamp ?? performance.now();
+      const delta = Math.max(0, (currentTimestamp - state.lastFrameTimestamp) / 1000);
+      state.lastFrameTimestamp = currentTimestamp;
+      return delta;
+    })();
 
     ctx.fillStyle = `rgba(10, 13, 18, ${trail})`;
     ctx.fillRect(0, 0, w, h);
@@ -615,8 +645,14 @@ function step() {
       tryFoodBasedReproduction(boid, nextBoids);
       tryAggressiveAttack(boid, index, eliminated);
 
-      if (shouldBoidDie(boid)) {
-        log('Boid removed', { frame: state.frame, score: boid.score.toFixed(2) });
+      const { dead, reason, consumptionMultiplier } = shouldBoidDie(boid, deltaSeconds);
+      if (dead) {
+        log('Boid removed', {
+          frame: state.frame,
+          score: boid.score.toFixed(2),
+          reason,
+          foodNeedMultiplier: consumptionMultiplier.toFixed(2),
+        });
         nextBoids.push(spawnFromBest());
         continue;
       }
