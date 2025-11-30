@@ -241,13 +241,13 @@ function limitVector(x, y, max) {
 }
 
 function steerToFood(boid) {
-  const { foodPerception, maxForce } = boid.genome;
+  const { foodPerception, maxForce, aggressionThreshold } = boid.genome;
   let target = null;
   let bestValue = 0;
 
   try {
     for (let i = 0; i < state.foods.length; i += 1) {
-      const food = state.foods[i];
+      const food = boid.aggression <= aggressionThreshold ? state.foods[i] : state.boids();
       const dx = food.x - boid.x;
       const dy = food.y - boid.y;
       const dist = Math.hypot(dx, dy);
