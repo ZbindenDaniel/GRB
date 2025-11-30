@@ -43,6 +43,8 @@ const log = (message, extra = {}) => {
   console.info(`[boids] ${message}`, extra);
 };
 
+const PEACEFUL_AGGRESSIVE_SEPARATION_BOOST = 2.2;
+
 function resizeCanvas() {
   const parent = canvas.parentElement;
   canvas.width = parent.clientWidth * devicePixelRatio;
@@ -227,11 +229,14 @@ function steerToFood(boid) {
 function steerBoid(boid, index) {
   const { perception, separationWeight, alignmentWeight, cohesionWeight, maxForce } = boid.genome;
   const { maxSpeed } = boid.genome;
+  const { aggressionThreshold } = state.settings;
 
   let total = 0;
   let steerSeparation = { x: 0, y: 0 };
   let steerAlignment = { x: 0, y: 0 };
   let steerCohesion = { x: 0, y: 0 };
+
+  const isBoidPeaceful = boid.aggression <= aggressionThreshold;
 
   state.boids.forEach((other, i) => {
     if (i === index) return;
@@ -240,8 +245,11 @@ function steerBoid(boid, index) {
     const dist = Math.hypot(dx, dy);
     if (dist > 0 && dist < perception) {
       const invDist = 1 / dist;
-      steerSeparation.x -= dx * invDist;
-      steerSeparation.y -= dy * invDist;
+      const isOtherAggressive = other.aggression > aggressionThreshold;
+      const separationScale = isBoidPeaceful && isOtherAggressive ? PEACEFUL_AGGRESSIVE_SEPARATION_BOOST : 1;
+
+      steerSeparation.x -= dx * invDist * separationScale;
+      steerSeparation.y -= dy * invDist * separationScale;
 
       steerAlignment.x += other.vx;
       steerAlignment.y += other.vy;
@@ -721,6 +729,9 @@ function start() {
     seedFood();
     renderControls();
     updateBestPerformerPanel();
+    log('Peaceful-aggressive separation boost active', {
+      multiplier: PEACEFUL_AGGRESSIVE_SEPARATION_BOOST,
+    });
     ctx.fillStyle = 'rgba(10, 13, 18, 1)';
     ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
     requestAnimationFrame(step);
