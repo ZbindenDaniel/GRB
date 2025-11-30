@@ -18,11 +18,11 @@ const state = {
   foodSpawnAccumulator: 0,
   settings: {
     boidCount: 420,
-    trail: 0.08,
+    trail: 0,
     speedMultiplier: 1,
     foodCount: 22,
     foodSpawnPerMinute: 120,
-    foodRespawnDelaySeconds: 1.8,
+    foodRespawnDelaySeconds: 0,
     foodDecayRate: 0.002,
     foodReward: 1.2,
     foodDepletionOnEat: 0.5,
@@ -54,19 +54,42 @@ const AGGRESSION_ATTACK_SPEED_BREAK = 0.22;
 
 function foodNeedMultiplier(boid) {
   try {
+    const { speedMultiplier } = state.settings;
     const speedNormalized = normalized(
       boid.genome.maxSpeed,
       genomeRanges.maxSpeed.min,
       genomeRanges.maxSpeed.max,
+    );
+    const foodPerceptionNormalized = normalized(
+      boid.genome.foodPerception,
+      genomeRanges.foodPerception.min,
+      genomeRanges.foodPerception.max,
     );
     const perceptionNormalized = normalized(
       boid.genome.perception,
       genomeRanges.perception.min,
       genomeRanges.perception.max,
     );
-    return 1 + (speedNormalized + perceptionNormalized) * 0.5;
+    const speedFactor = speedNormalized * speedMultiplier;
+    const perceptionFactor = perceptionNormalized * 0.6;
+    const foodPerceptionFactor = foodPerceptionNormalized * 0.4;
+    return 1 + speedFactor + perceptionFactor + foodPerceptionFactor;
   } catch (error) {
     console.error('[boids] Failed to derive food need multiplier', error);
+    return 1;
+  }
+}
+
+function reproductionCostMultiplier(boid) {
+  try {
+    const perceptionNormalized = normalized(
+      boid.genome.perception,
+      genomeRanges.perception.min,
+      genomeRanges.perception.max,
+    );
+    return 1 + perceptionNormalized;
+  } catch (error) {
+    console.error('[boids] Failed to derive reproduction multiplier', error);
     return 1;
   }
 }
@@ -121,11 +144,33 @@ function mutateGenome(baseGenome) {
   return applyFoodCohesionTradeoff(mutated);
 }
 
+function traitHexDigit(value, range) {
+  const clamped = Math.min(range.max, Math.max(range.min, value));
+  const normalizedValue = normalized(clamped, range.min, range.max);
+  const scaled = Math.floor(normalizedValue * 15);
+  return scaled.toString(16).toUpperCase();
+}
+
 function deriveBoidColor(genome) {
-  const r = Math.floor(normalized(genome.separationWeight, genomeRanges.separationWeight.min, genomeRanges.separationWeight.max) * 255);
-  const g = Math.floor(normalized(genome.cohesionWeight, genomeRanges.cohesionWeight.min, genomeRanges.cohesionWeight.max) * 255);
-  const b = Math.floor(normalized(genome.alignmentWeight, genomeRanges.alignmentWeight.min, genomeRanges.alignmentWeight.max) * 255);
-  return `rgba(${r}, ${g}, ${b}, 0.9)`;
+  try {
+    const traitOrder = [
+      ['perception', genomeRanges.perception],
+      ['foodPerception', genomeRanges.foodPerception],
+      ['maxSpeed', genomeRanges.maxSpeed],
+      ['maxForce', genomeRanges.maxForce],
+      ['separationWeight', genomeRanges.separationWeight],
+      ['alignmentWeight', genomeRanges.alignmentWeight],
+    ];
+
+    const hexCode = traitOrder
+      .map(([key, range]) => traitHexDigit(genome[key], range))
+      .join('');
+
+    return `#${hexCode}`;
+  } catch (error) {
+    console.error('[boids] Failed to derive boid color', error);
+    return '#777777';
+  }
 }
 
 function deriveAggression(genome) {
@@ -666,8 +711,12 @@ function tryFoodBasedReproduction(boid, nextBoids) {
     const baseRequirement =
       boid.aggression > aggressionThreshold ? aggressiveFoodForReproduction : peacefulFoodForReproduction;
     const multiplier = foodNeedMultiplier(boid);
-    const requiredFood = baseRequirement * multiplier;
-    const energyCost = Math.max(peacefulReproductionCost * multiplier, requiredFood * foodReward);
+    const perceptionCost = reproductionCostMultiplier(boid);
+    const requiredFood = baseRequirement * multiplier * perceptionCost;
+    const energyCost = Math.max(
+      peacefulReproductionCost * multiplier * perceptionCost,
+      requiredFood * foodReward,
+    );
     const hasCollectedEnoughFood = boid.foodCollected >= requiredFood;
     const hasEnergyForOffspring = boid.energy - energyCost >= reproductionEnergyReserve;
     const { count: availableFoodCount, totalValue: availableFoodValue } = getAvailableFoodStats();
@@ -710,6 +759,7 @@ function tryFoodBasedReproduction(boid, nextBoids) {
       parentFoodCollected: boid.foodCollected.toFixed(2),
       baseFoodRequired: baseRequirement.toFixed(2),
       foodNeedMultiplier: multiplier.toFixed(2),
+      perceptionReproductionMultiplier: perceptionCost.toFixed(2),
       requiredFood: requiredFood.toFixed(2),
       energyCost: energyCost.toFixed(2),
       framesSinceLastReproduction,
@@ -759,8 +809,12 @@ function step(timestamp) {
       return delta;
     })();
 
-    ctx.fillStyle = `rgba(10, 13, 18, ${trail})`;
-    ctx.fillRect(0, 0, w, h);
+    if (trail > 0) {
+      ctx.fillStyle = `rgba(10, 13, 18, ${trail})`;
+      ctx.fillRect(0, 0, w, h);
+    } else {
+      ctx.clearRect(0, 0, w, h);
+    }
     ctx.strokeStyle = 'rgba(110, 199, 255, 0.86)';
 
     decayFood();
@@ -841,7 +895,6 @@ function renderControls() {
         step: 10,
         format: (value) => value.toFixed(0),
         normalize: (value) => Math.round(value),
-        onChange: (value) => adjustBoidCount(Math.round(value)),
       },
       {
         key: 'speedMultiplier',
@@ -860,7 +913,6 @@ function renderControls() {
         step: 2,
         format: (value) => value.toFixed(0),
         normalize: (value) => Math.round(value),
-        onChange: (value) => adjustFoodCount(Math.round(value)),
       },
       {
         key: 'foodSpawnPerMinute',
@@ -948,6 +1000,7 @@ function renderControls() {
         </div>
         <button type="button" class="button" data-restart>Restart with current settings</button>
         <p class="control__hint">Apply parameter changes by reseeding the swarm and food field.</p>
+        <p class="control__hint">Boid and food counts set the initial populations on restart only.</p>
       </div>
       <p>
         Parameters evolve automatically—watch colors shift as separation (red), cohesion (green), alignment (blue), and
