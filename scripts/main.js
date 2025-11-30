@@ -19,7 +19,7 @@ const state = {
     boidCount: 420,
     trail: 0.08,
     speedMultiplier: 1,
-    foodCount: 36,
+    foodCount: 22,
     foodDecayRate: 0.002,
     foodReward: 1.2,
     foodDepletionOnEat: 0.5,
@@ -34,6 +34,7 @@ const state = {
     peacefulFoodForReproduction: 2,
     aggressiveFoodForReproduction: 3,
     peacefulReproductionCost: 0.55,
+    reproductionCooldownSeconds: 3,
   },
   frame: 0,
   lastFrameTimestamp: null,
@@ -520,15 +521,27 @@ function tryAggressiveAttack(boid, index, eliminated) {
 }
 
 function tryFoodBasedReproduction(boid, nextBoids) {
-  const { aggressionThreshold, peacefulFoodForReproduction, aggressiveFoodForReproduction, peacefulReproductionCost } =
-    state.settings;
+  const {
+    aggressionThreshold,
+    peacefulFoodForReproduction,
+    aggressiveFoodForReproduction,
+    peacefulReproductionCost,
+    reproductionCooldownSeconds,
+    foodReward,
+  } = state.settings;
 
   try {
     const baseRequirement =
       boid.aggression > aggressionThreshold ? aggressiveFoodForReproduction : peacefulFoodForReproduction;
-    const requiredFood = baseRequirement * foodNeedMultiplier(boid);
+    const multiplier = foodNeedMultiplier(boid);
+    const requiredFood = baseRequirement * multiplier;
+    const energyCost = Math.max(peacefulReproductionCost * multiplier, requiredFood * foodReward);
     const hasCollectedEnoughFood = boid.foodCollected >= requiredFood;
-    const hasEnergyForOffspring = boid.energy >= peacefulReproductionCost;
+    const hasEnergyForOffspring = boid.energy >= energyCost;
+    const framesSinceLastReproduction = state.frame - boid.lastReproductionFrame;
+    const cooldownFrames = Math.ceil(reproductionCooldownSeconds * 60);
+
+    if (framesSinceLastReproduction < cooldownFrames) return;
 
     if (!hasCollectedEnoughFood || !hasEnergyForOffspring) return;
 
@@ -538,7 +551,7 @@ function tryFoodBasedReproduction(boid, nextBoids) {
       genome: mutateGenome(boid.genome),
     });
 
-    boid.energy -= peacefulReproductionCost;
+    boid.energy -= energyCost;
     boid.foodCollected -= requiredFood;
     boid.lastReproductionFrame = state.frame;
     nextBoids.push(offspring);
@@ -547,8 +560,11 @@ function tryFoodBasedReproduction(boid, nextBoids) {
       parentEnergy: boid.energy.toFixed(2),
       parentFoodCollected: boid.foodCollected.toFixed(2),
       baseFoodRequired: baseRequirement.toFixed(2),
-      foodNeedMultiplier: foodNeedMultiplier(boid).toFixed(2),
+      foodNeedMultiplier: multiplier.toFixed(2),
       requiredFood: requiredFood.toFixed(2),
+      energyCost: energyCost.toFixed(2),
+      framesSinceLastReproduction,
+      cooldownFrames,
       offspringAggression: offspring.aggression.toFixed(2),
     });
   } catch (error) {
@@ -572,8 +588,9 @@ function spawnFromBest() {
 function shouldBoidDie(boid, deltaSeconds) {
   const { minNeighborsForSafety, lonelyDeathChance, foodConsumptionPerSecond } = state.settings;
   const consumptionMultiplier = foodNeedMultiplier(boid);
+  const effectiveDeltaSeconds = Math.max(deltaSeconds, 0.016);
   const consumption = foodConsumptionPerSecond * consumptionMultiplier;
-  boid.energy -= consumption * deltaSeconds;
+  boid.energy -= consumption * effectiveDeltaSeconds;
   if (boid.energy <= 0) {
     return { dead: true, reason: 'starvation', consumptionMultiplier };
   }
