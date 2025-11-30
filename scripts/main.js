@@ -3,6 +3,8 @@ const ctx = canvas.getContext('2d', { alpha: true });
 
 const state = {
   boids: [],
+  foods: [],
+  bestPerformer: null,
   settings: {
     boidCount: 420,
     maxSpeed: 2.4,
@@ -12,6 +14,14 @@ const state = {
     alignmentWeight: 1.0,
     cohesionWeight: 0.8,
     trail: 0.08,
+    foodCount: 36,
+    foodDecayRate: 0.002,
+    foodReward: 1.2,
+    foodDepletionOnEat: 0.5,
+    starvationRate: 0.003,
+    initialEnergy: 1.0,
+    minNeighborsForSafety: 2,
+    lonelyDeathChance: 0.008,
   },
   frame: 0,
 };
@@ -40,13 +50,24 @@ function resizeCanvas() {
   log('Canvas resized', { width: canvas.width, height: canvas.height });
 }
 
-function seedBoids() {
-  state.boids = Array.from({ length: state.settings.boidCount }, () => ({
+function createBoid(base = {}) {
+  const { maxSpeed, initialEnergy } = state.settings;
+  const nextVx = base.vx ?? (Math.random() - 0.5) * maxSpeed;
+  const nextVy = base.vy ?? (Math.random() - 0.5) * maxSpeed;
+  const limited = limitVector(nextVx, nextVy, maxSpeed);
+  return {
     x: Math.random() * canvas.clientWidth,
     y: Math.random() * canvas.clientHeight,
-    vx: (Math.random() - 0.5) * state.settings.maxSpeed,
-    vy: (Math.random() - 0.5) * state.settings.maxSpeed,
-  }));
+    vx: limited.x,
+    vy: limited.y,
+    energy: initialEnergy,
+    score: 0,
+    lastNeighborCount: 0,
+  };
+}
+
+function seedBoids() {
+  state.boids = Array.from({ length: state.settings.boidCount }, () => createBoid());
   log('Boids seeded', { count: state.boids.length });
 }
 
@@ -56,12 +77,7 @@ function adjustBoidCount(nextCount) {
 
   if (nextCount > current) {
     const toAdd = nextCount - current;
-    const additions = Array.from({ length: toAdd }, () => ({
-      x: Math.random() * canvas.clientWidth,
-      y: Math.random() * canvas.clientHeight,
-      vx: (Math.random() - 0.5) * state.settings.maxSpeed,
-      vy: (Math.random() - 0.5) * state.settings.maxSpeed,
-    }));
+    const additions = Array.from({ length: toAdd }, () => createBoid());
     state.boids.push(...additions);
   } else {
     state.boids.length = nextCount;
@@ -138,7 +154,7 @@ function steerBoid(boid, index) {
     steerCohesion.y * cohesionWeight;
 
   const limited = limitVector(ax, ay, maxForce);
-  return limited;
+  return { ...limited, neighborCount: total };
 }
 
 function drawBoid(x, y, angle) {
@@ -155,6 +171,99 @@ function drawBoid(x, y, angle) {
   ctx.restore();
 }
 
+function createFood() {
+  return {
+    x: Math.random() * canvas.clientWidth,
+    y: Math.random() * canvas.clientHeight,
+    value: 1,
+  };
+}
+
+function seedFood() {
+  state.foods = Array.from({ length: state.settings.foodCount }, () => createFood());
+  log('Food seeded', { count: state.foods.length });
+}
+
+function decayFood() {
+  const { foodDecayRate } = state.settings;
+  state.foods = state.foods.map((food) => {
+    const nextValue = Math.max(0, food.value - foodDecayRate);
+    if (nextValue === 0) {
+      return createFood();
+    }
+    return { ...food, value: nextValue };
+  });
+}
+
+function drawFood(food) {
+  const radius = 5 + food.value * 4;
+  ctx.save();
+  ctx.beginPath();
+  ctx.fillStyle = `rgba(120, 255, 140, ${0.2 + food.value * 0.6})`;
+  ctx.strokeStyle = 'rgba(70, 140, 90, 0.7)';
+  ctx.arc(food.x, food.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function trackBestPerformer(boid) {
+  if (!state.bestPerformer || boid.score > state.bestPerformer.score) {
+    state.bestPerformer = { vx: boid.vx, vy: boid.vy, score: boid.score };
+    log('Best performer updated', { score: boid.score.toFixed(2) });
+  }
+}
+
+function tryConsumeFood(boid) {
+  const { foodReward, foodDepletionOnEat } = state.settings;
+  let reward = 0;
+  state.foods = state.foods.map((food) => {
+    const dx = food.x - boid.x;
+    const dy = food.y - boid.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 14 && food.value > 0.05) {
+      const bite = Math.min(food.value, foodDepletionOnEat);
+      reward += bite * foodReward;
+      const remaining = food.value - bite;
+      if (remaining <= 0.02) {
+        return createFood();
+      }
+      return { ...food, value: remaining };
+    }
+    return food;
+  });
+
+  if (reward > 0) {
+    boid.energy += reward;
+    boid.score += reward;
+    trackBestPerformer(boid);
+  }
+}
+
+function spawnFromBest() {
+  const base = state.bestPerformer || { vx: (Math.random() - 0.5) * state.settings.maxSpeed, vy: (Math.random() - 0.5) * state.settings.maxSpeed };
+  const jitter = (Math.random() - 0.5) * 0.5;
+  const boid = createBoid({ vx: base.vx + jitter, vy: base.vy - jitter });
+  log('Boid spawned from best performer');
+  return boid;
+}
+
+function shouldBoidDie(boid) {
+  const { minNeighborsForSafety, lonelyDeathChance, starvationRate } = state.settings;
+  boid.energy -= starvationRate;
+  if (boid.energy <= 0) {
+    return true;
+  }
+
+  if (boid.lastNeighborCount < minNeighborsForSafety) {
+    const roll = Math.random();
+    if (roll < lonelyDeathChance) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function step() {
   try {
     const { maxSpeed, trail } = state.settings;
@@ -166,10 +275,17 @@ function step() {
     ctx.fillRect(0, 0, w, h);
     ctx.strokeStyle = 'rgba(110, 199, 255, 0.86)';
 
-    state.boids.forEach((boid, index) => {
-      const { x, y } = boid;
-      const { x: ax, y: ay } = steerBoid(boid, index);
+    decayFood();
+    state.foods.forEach((food) => drawFood(food));
 
+    const nextBoids = [];
+
+    for (let index = 0; index < state.boids.length; index += 1) {
+      const boid = state.boids[index];
+      const { x, y } = boid;
+      const { x: ax, y: ay, neighborCount } = steerBoid(boid, index);
+
+      boid.lastNeighborCount = neighborCount;
       boid.vx += ax;
       boid.vy += ay;
 
@@ -185,9 +301,20 @@ function step() {
       if (boid.y < 0) boid.y = h;
       else if (boid.y > h) boid.y = 0;
 
+      tryConsumeFood(boid);
+
+      if (shouldBoidDie(boid)) {
+        log('Boid removed', { frame: state.frame, score: boid.score.toFixed(2) });
+        nextBoids.push(spawnFromBest());
+        continue;
+      }
+
       const angle = Math.atan2(boid.vy, boid.vx);
       drawBoid(boid.x, boid.y, angle);
-    });
+      nextBoids.push(boid);
+    }
+
+    state.boids = nextBoids;
   } catch (error) {
     console.error('[boids] Animation step failed', error);
   }
@@ -255,6 +382,7 @@ function start() {
     }
     resizeCanvas();
     seedBoids();
+    seedFood();
     renderControls();
     ctx.fillStyle = 'rgba(10, 13, 18, 1)';
     ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
