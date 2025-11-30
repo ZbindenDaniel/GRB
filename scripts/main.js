@@ -20,22 +20,22 @@ const state = {
     boidCount: 420,
     trail: 0,
     speedMultiplier: 1,
-    foodCount: 22,
-    foodSpawnPerMinute: 120,
+    foodCount: 200,
+    foodSpawnPerMinute: 200,
     foodRespawnDelaySeconds: 0,
     foodDecayRate: 0.002,
     foodReward: 1.2,
     foodDepletionOnEat: 0.5,
-    foodConsumptionPerSecond: 0.2,
-    initialEnergy: 1.0,
+    foodConsumptionPerSecond: 0.005,
+    initialEnergy: 100,
     minNeighborsForSafety: 2,
     lonelyDeathChance: 0.001,
     mutationRate: 0.26,
     mutationScale: 0.22,
     aggressionThreshold: 0.25,
-    aggressionEnergyBonus: 0.4,
-    peacefulFoodForReproduction: 2,
-    aggressiveFoodForReproduction: 3,
+    aggressionEnergyBonus: 0.6,
+    peacefulFoodForReproduction: 1,
+    aggressiveFoodForReproduction: 1.2,
     peacefulReproductionCost: 0.55,
     reproductionEnergyReserve: 0.2,
     reproductionCooldownSeconds: 3,
@@ -49,8 +49,8 @@ const log = (message, extra = {}) => {
 };
 
 const PEACEFUL_AGGRESSIVE_SEPARATION_BOOST = 2.2;
-const AGGRESSION_ATTACK_RECOVERY_DURATION = 1.8;
-const AGGRESSION_ATTACK_SPEED_BREAK = 0.22;
+const AGGRESSION_ATTACK_RECOVERY_DURATION = 2;
+const AGGRESSION_ATTACK_SPEED_BREAK = 0.8;
 
 function foodNeedMultiplier(boid) {
   try {
