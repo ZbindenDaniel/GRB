@@ -243,7 +243,7 @@ function limitVector(x, y, max) {
 function steerToFood(boid) {
   const { foodPerception, maxForce, aggressionThreshold } = boid.genome;
   let target = null;
-  let bestValue = 0;
+  let bestValue = Math.POSITIVE_INFINITY;
 
   try {
     for (let i = 0; i < state.foods.length; i += 1) {
@@ -251,7 +251,7 @@ function steerToFood(boid) {
       const dx = food.x - boid.x;
       const dy = food.y - boid.y;
       const dist = Math.hypot(dx, dy);
-      if (dist > 0 && dist <= foodPerception && food.value > bestValue) {
+      if (dist > 0 && dist <= foodPerception && dist > bestValue) {
         target = { dx, dy, dist };
         bestValue = food.value;
       }
@@ -259,8 +259,8 @@ function steerToFood(boid) {
 
     if (!target) return { x: 0, y: 0 };
 
-    const desiredX = target.x // target.dx / target.dist;
-    const desiredY = target.y //target.dy / target.dist;
+    const desiredX = target.dx / target.dist;
+    const desiredY = target.dy / target.dist;
     return limitVector(desiredX, desiredY, maxForce);
   } catch (error) {
     console.error('[boids] Failed to steer toward food', error);
