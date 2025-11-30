@@ -37,6 +37,7 @@ const state = {
     peacefulFoodForReproduction: 2,
     aggressiveFoodForReproduction: 3,
     peacefulReproductionCost: 0.55,
+    reproductionEnergyReserve: 0.2,
     reproductionCooldownSeconds: 3,
   },
   frame: 0,
@@ -633,6 +634,7 @@ function tryFoodBasedReproduction(boid, nextBoids) {
     peacefulFoodForReproduction,
     aggressiveFoodForReproduction,
     peacefulReproductionCost,
+    reproductionEnergyReserve,
     reproductionCooldownSeconds,
     foodReward,
   } = state.settings;
@@ -644,7 +646,7 @@ function tryFoodBasedReproduction(boid, nextBoids) {
     const requiredFood = baseRequirement * multiplier;
     const energyCost = Math.max(peacefulReproductionCost * multiplier, requiredFood * foodReward);
     const hasCollectedEnoughFood = boid.foodCollected >= requiredFood;
-    const hasEnergyForOffspring = boid.energy >= energyCost;
+    const hasEnergyForOffspring = boid.energy - energyCost >= reproductionEnergyReserve;
     const { count: availableFoodCount, totalValue: availableFoodValue } = getAvailableFoodStats();
     const enoughFoodInWorld = availableFoodCount > 0 && availableFoodValue >= requiredFood * 0.5;
     const framesSinceLastReproduction = state.frame - boid.lastReproductionFrame;
@@ -658,6 +660,12 @@ function tryFoodBasedReproduction(boid, nextBoids) {
           availableFoodCount,
           availableFoodValue: availableFoodValue.toFixed(2),
           requiredFood: requiredFood.toFixed(2),
+        });
+      } else if (hasCollectedEnoughFood && !hasEnergyForOffspring) {
+        log('Reproduction blocked by low energy reserve', {
+          currentEnergy: boid.energy.toFixed(2),
+          energyCost: energyCost.toFixed(2),
+          reserveRequired: reproductionEnergyReserve.toFixed(2),
         });
       }
       return;
@@ -689,24 +697,6 @@ function tryFoodBasedReproduction(boid, nextBoids) {
   } catch (error) {
     console.error('[boids] Failed food-based reproduction', error);
   }
-}
-
-function spawnFromBest() {
-  const { count: availableFoodCount, totalValue: availableFoodValue } = getAvailableFoodStats();
-  if (availableFoodCount === 0 || availableFoodValue <= 0) {
-    log('Boid spawn skipped due to lack of food');
-    return null;
-  }
-  const baseGenome = state.bestPerformer?.genome ?? randomGenome();
-  const genome = mutateGenome(baseGenome);
-  const velocityJitter = (Math.random() - 0.5) * 0.5;
-  const boid = createBoid({
-    vx: (state.bestPerformer?.vx ?? (Math.random() - 0.5) * genome.maxSpeed) + velocityJitter,
-    vy: (state.bestPerformer?.vy ?? (Math.random() - 0.5) * genome.maxSpeed) - velocityJitter,
-    genome,
-  });
-  log('Boid spawned from best performer', { genome });
-  return boid;
 }
 
 function shouldBoidDie(boid, deltaSeconds) {
@@ -799,10 +789,6 @@ function step(timestamp) {
           reason,
           foodNeedMultiplier: consumptionMultiplier.toFixed(2),
         });
-        const replacement = spawnFromBest();
-        if (replacement) {
-          nextBoids.push(replacement);
-        }
         continue;
       }
 
@@ -823,87 +809,144 @@ function renderControls() {
   if (!container) return;
 
   try {
-    container.innerHTML = `
-      <div class="slider">
-        <div class="slider__header">
-          <label for="boid-count">Boid count</label>
-          <span class="slider__value" data-output="boidCount">${state.settings.boidCount}</span>
-        </div>
-        <input id="boid-count" type="range" min="60" max="780" step="10" value="${state.settings.boidCount}" data-control="boidCount" />
-      </div>
-      <div class="slider">
-        <div class="slider__header">
-          <label for="speed-scale">Simulation speed</label>
-          <span class="slider__value" data-output="speedMultiplier">${state.settings.speedMultiplier.toFixed(2)}×</span>
-        </div>
-        <input id="speed-scale" type="range" min="0.4" max="2.4" step="0.05" value="${state.settings.speedMultiplier}" data-control="speedMultiplier" />
-      </div>
-      <div class="slider">
-        <div class="slider__header">
-          <label for="food-count">Food count</label>
-          <span class="slider__value" data-output="foodCount">${state.settings.foodCount}</span>
-        </div>
-        <input id="food-count" type="range" min="6" max="120" step="2" value="${state.settings.foodCount}" data-control="foodCount" />
-      </div>
-      <div class="slider">
-        <div class="slider__header">
-          <label for="food-spawn-rate">Food spawn rate</label>
-          <span class="slider__value" data-output="foodSpawnPerMinute">${state.settings.foodSpawnPerMinute}/min</span>
+    const controls = [
+      {
+        key: 'boidCount',
+        label: 'Boid count',
+        min: 60,
+        max: 780,
+        step: 10,
+        format: (value) => value.toFixed(0),
+        normalize: (value) => Math.round(value),
+        onChange: (value) => adjustBoidCount(Math.round(value)),
+      },
+      {
+        key: 'speedMultiplier',
+        label: 'Simulation speed',
+        min: 0.4,
+        max: 2.4,
+        step: 0.05,
+        suffix: '×',
+        format: (value) => value.toFixed(2),
+      },
+      {
+        key: 'foodCount',
+        label: 'Food count',
+        min: 6,
+        max: 160,
+        step: 2,
+        format: (value) => value.toFixed(0),
+        normalize: (value) => Math.round(value),
+        onChange: (value) => adjustFoodCount(Math.round(value)),
+      },
+      {
+        key: 'foodSpawnPerMinute',
+        label: 'Food spawn rate',
+        min: 0,
+        max: 600,
+        step: 5,
+        suffix: '/min',
+        format: (value) => value.toFixed(0),
+      },
+      {
+        key: 'peacefulFoodForReproduction',
+        label: 'Peaceful food to reproduce',
+        min: 0.5,
+        max: 6,
+        step: 0.1,
+        format: (value) => value.toFixed(2),
+      },
+      {
+        key: 'aggressiveFoodForReproduction',
+        label: 'Aggressive food to reproduce',
+        min: 0.5,
+        max: 6,
+        step: 0.1,
+        format: (value) => value.toFixed(2),
+      },
+      {
+        key: 'peacefulReproductionCost',
+        label: 'Reproduction energy cost',
+        min: 0.1,
+        max: 2,
+        step: 0.05,
+        format: (value) => value.toFixed(2),
+      },
+      {
+        key: 'reproductionEnergyReserve',
+        label: 'Energy reserve to reproduce',
+        min: 0,
+        max: 2,
+        step: 0.05,
+        format: (value) => value.toFixed(2),
+      },
+      {
+        key: 'initialEnergy',
+        label: 'Initial energy',
+        min: 0.1,
+        max: 5,
+        step: 0.1,
+        format: (value) => value.toFixed(2),
+      },
+      {
+        key: 'foodConsumptionPerSecond',
+        label: 'Energy burn per second',
+        min: 0.05,
+        max: 0.8,
+        step: 0.01,
+        format: (value) => value.toFixed(3),
+      },
+    ];
+
+    const buildInput = ({ key, label, min, max, step, suffix, format }) => `
+      <div class="control">
+        <div class="control__header">
+          <label for="${key}">${label}</label>
+          <span class="control__value" data-output="${key}">${format(state.settings[key])}${suffix ?? ''}</span>
         </div>
         <input
-          id="food-spawn-rate"
-          type="range"
-          min="0"
-          max="500"
-          step="10"
-          value="${state.settings.foodSpawnPerMinute}"
-          data-control="foodSpawnPerMinute"
+          class="control__input"
+          id="${key}"
+          type="number"
+          min="${min}"
+          max="${max}"
+          step="${step}"
+          value="${state.settings[key]}"
+          data-control="${key}"
         />
       </div>
-      <p>Parameters evolve automatically—watch colors shift as separation (red), cohesion (green), and alignment (blue) adapt.</p>
     `;
 
-    const boidInput = container.querySelector('[data-control="boidCount"]');
-    const speedInput = container.querySelector('[data-control="speedMultiplier"]');
-    const foodInput = container.querySelector('[data-control="foodCount"]');
-    const foodSpawnInput = container.querySelector('[data-control="foodSpawnPerMinute"]');
-    const boidOutput = container.querySelector('[data-output="boidCount"]');
-    const speedOutput = container.querySelector('[data-output="speedMultiplier"]');
-    const foodOutput = container.querySelector('[data-output="foodCount"]');
-    const foodSpawnOutput = container.querySelector('[data-output="foodSpawnPerMinute"]');
+    container.innerHTML = `
+      ${controls.map((control) => buildInput(control)).join('')}
+      <p>
+        Parameters evolve automatically—watch colors shift as separation (red), cohesion (green), alignment (blue), and
+        reproduction pressure adapt.
+      </p>
+    `;
 
-    boidInput?.addEventListener('input', (event) => {
-      const value = Number.parseInt(event.target.value, 10);
-      if (Number.isNaN(value)) return;
-      state.settings.boidCount = value;
-      boidOutput.textContent = value;
-      adjustBoidCount(value);
-      log('Boid count changed', { value });
-    });
-
-    speedInput?.addEventListener('input', (event) => {
-      const value = Number.parseFloat(event.target.value);
-      if (Number.isNaN(value)) return;
-      state.settings.speedMultiplier = value;
-      speedOutput.textContent = `${value.toFixed(2)}×`;
-      log('Speed multiplier changed', { value });
-    });
-
-    foodInput?.addEventListener('input', (event) => {
-      const value = Number.parseInt(event.target.value, 10);
-      if (Number.isNaN(value)) return;
-      state.settings.foodCount = value;
-      foodOutput.textContent = value;
-      adjustFoodCount(value);
-      log('Food count changed', { value });
-    });
-
-    foodSpawnInput?.addEventListener('input', (event) => {
-      const value = Number.parseInt(event.target.value, 10);
-      if (Number.isNaN(value)) return;
-      state.settings.foodSpawnPerMinute = value;
-      foodSpawnOutput.textContent = `${value}/min`;
-      log('Food spawn rate changed', { perMinute: value });
+    controls.forEach((control) => {
+      const input = container.querySelector(`[data-control="${control.key}"]`);
+      const output = container.querySelector(`[data-output="${control.key}"]`);
+      const formatValue = control.format ?? ((value) => value);
+      input?.addEventListener('input', (event) => {
+        try {
+          const value = Number.parseFloat(event.target.value);
+          if (!Number.isFinite(value)) return;
+          const clamped = Math.min(Math.max(value, control.min), control.max);
+          const normalized = control.normalize ? control.normalize(clamped) : clamped;
+          state.settings[control.key] = normalized;
+          if (output) {
+            output.textContent = `${formatValue(normalized)}${control.suffix ?? ''}`;
+          }
+          if (control.onChange) {
+            control.onChange(normalized);
+          }
+          log('Control updated', { key: control.key, value: normalized });
+        } catch (error) {
+          console.error('[boids] Control update failed', error);
+        }
+      });
     });
 
     log('Control panel rendered');
