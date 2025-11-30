@@ -1,19 +1,23 @@
 const canvas = document.getElementById('flow-canvas');
 const ctx = canvas.getContext('2d', { alpha: true });
 
+const genomeRanges = {
+  perception: { min: 28, max: 140 },
+  separationWeight: { min: 0.6, max: 2.5 },
+  alignmentWeight: { min: 0.5, max: 2.2 },
+  cohesionWeight: { min: 0.5, max: 2.2 },
+  maxSpeed: { min: 0.8, max: 3.6 },
+  maxForce: { min: 0.01, max: 0.08 },
+};
+
 const state = {
   boids: [],
   foods: [],
   bestPerformer: null,
   settings: {
     boidCount: 420,
-    maxSpeed: 2.4,
-    maxForce: 0.04,
-    perception: 72,
-    separationWeight: 1.4,
-    alignmentWeight: 1.0,
-    cohesionWeight: 0.8,
     trail: 0.08,
+    speedMultiplier: 1,
     foodCount: 36,
     foodDecayRate: 0.002,
     foodReward: 1.2,
@@ -22,19 +26,11 @@ const state = {
     initialEnergy: 1.0,
     minNeighborsForSafety: 2,
     lonelyDeathChance: 0.008,
+    mutationRate: 0.26,
+    mutationScale: 0.18,
   },
   frame: 0,
 };
-
-const controlDefinitions = [
-  { key: 'boidCount', label: 'Boid count', min: 150, max: 900, step: 10, format: (v) => Math.round(v) },
-  { key: 'maxSpeed', label: 'Max speed', min: 0.6, max: 4, step: 0.1, format: (v) => v.toFixed(1) },
-  { key: 'maxForce', label: 'Steering force', min: 0.005, max: 0.12, step: 0.005, format: (v) => v.toFixed(3) },
-  { key: 'perception', label: 'Perception radius', min: 24, max: 140, step: 2, format: (v) => Math.round(v) },
-  { key: 'separationWeight', label: 'Separation', min: 0.5, max: 2.5, step: 0.1, format: (v) => v.toFixed(1) },
-  { key: 'alignmentWeight', label: 'Alignment', min: 0.4, max: 2.2, step: 0.1, format: (v) => v.toFixed(1) },
-  { key: 'cohesionWeight', label: 'Cohesion', min: 0.4, max: 2.2, step: 0.1, format: (v) => v.toFixed(1) },
-];
 
 const log = (message, extra = {}) => {
   console.info(`[boids] ${message}`, extra);
@@ -50,11 +46,43 @@ function resizeCanvas() {
   log('Canvas resized', { width: canvas.width, height: canvas.height });
 }
 
+function normalized(value, min, max) {
+  return (value - min) / (max - min);
+}
+
+function randomGenome() {
+  return Object.fromEntries(
+    Object.entries(genomeRanges).map(([key, range]) => [key, range.min + Math.random() * (range.max - range.min)]),
+  );
+}
+
+function mutateGenome(baseGenome) {
+  const { mutationRate, mutationScale } = state.settings;
+  return Object.fromEntries(
+    Object.entries(genomeRanges).map(([key, range]) => {
+      const original = baseGenome[key];
+      const shouldMutate = Math.random() < mutationRate;
+      const magnitude = shouldMutate ? 1 + (Math.random() * 2 - 1) * mutationScale : 1;
+      const mutated = original * magnitude;
+      const clamped = Math.min(range.max, Math.max(range.min, mutated));
+      return [key, clamped];
+    }),
+  );
+}
+
+function deriveBoidColor(genome) {
+  const r = Math.floor(normalized(genome.separationWeight, genomeRanges.separationWeight.min, genomeRanges.separationWeight.max) * 255);
+  const g = Math.floor(normalized(genome.cohesionWeight, genomeRanges.cohesionWeight.min, genomeRanges.cohesionWeight.max) * 255);
+  const b = Math.floor(normalized(genome.alignmentWeight, genomeRanges.alignmentWeight.min, genomeRanges.alignmentWeight.max) * 255);
+  return `rgba(${r}, ${g}, ${b}, 0.9)`;
+}
+
 function createBoid(base = {}) {
-  const { maxSpeed, initialEnergy } = state.settings;
-  const nextVx = base.vx ?? (Math.random() - 0.5) * maxSpeed;
-  const nextVy = base.vy ?? (Math.random() - 0.5) * maxSpeed;
-  const limited = limitVector(nextVx, nextVy, maxSpeed);
+  const { initialEnergy } = state.settings;
+  const genome = base.genome ?? randomGenome();
+  const nextVx = base.vx ?? (Math.random() - 0.5) * genome.maxSpeed;
+  const nextVy = base.vy ?? (Math.random() - 0.5) * genome.maxSpeed;
+  const limited = limitVector(nextVx, nextVy, genome.maxSpeed);
   return {
     x: Math.random() * canvas.clientWidth,
     y: Math.random() * canvas.clientHeight,
@@ -63,6 +91,8 @@ function createBoid(base = {}) {
     energy: initialEnergy,
     score: 0,
     lastNeighborCount: 0,
+    genome,
+    color: deriveBoidColor(genome),
   };
 }
 
@@ -95,14 +125,8 @@ function limitVector(x, y, max) {
 }
 
 function steerBoid(boid, index) {
-  const {
-    perception,
-    separationWeight,
-    alignmentWeight,
-    cohesionWeight,
-    maxSpeed,
-    maxForce,
-  } = state.settings;
+  const { perception, separationWeight, alignmentWeight, cohesionWeight, maxForce } = boid.genome;
+  const { maxSpeed } = boid.genome;
 
   let total = 0;
   let steerSeparation = { x: 0, y: 0 };
@@ -157,12 +181,14 @@ function steerBoid(boid, index) {
   return { ...limited, neighborCount: total };
 }
 
-function drawBoid(x, y, angle) {
+function drawBoid(boid) {
   const size = 6;
+  const angle = Math.atan2(boid.vy, boid.vx);
   ctx.save();
-  ctx.translate(x, y);
+  ctx.translate(boid.x, boid.y);
   ctx.rotate(angle);
   ctx.beginPath();
+  ctx.strokeStyle = boid.color;
   ctx.moveTo(size, 0);
   ctx.lineTo(-size * 0.8, size * 0.6);
   ctx.lineTo(-size * 0.8, -size * 0.6);
@@ -209,8 +235,8 @@ function drawFood(food) {
 
 function trackBestPerformer(boid) {
   if (!state.bestPerformer || boid.score > state.bestPerformer.score) {
-    state.bestPerformer = { vx: boid.vx, vy: boid.vy, score: boid.score };
-    log('Best performer updated', { score: boid.score.toFixed(2) });
+    state.bestPerformer = { vx: boid.vx, vy: boid.vy, score: boid.score, genome: boid.genome };
+    log('Best performer updated', { score: boid.score.toFixed(2), genome: boid.genome });
   }
 }
 
@@ -241,10 +267,15 @@ function tryConsumeFood(boid) {
 }
 
 function spawnFromBest() {
-  const base = state.bestPerformer || { vx: (Math.random() - 0.5) * state.settings.maxSpeed, vy: (Math.random() - 0.5) * state.settings.maxSpeed };
-  const jitter = (Math.random() - 0.5) * 0.5;
-  const boid = createBoid({ vx: base.vx + jitter, vy: base.vy - jitter });
-  log('Boid spawned from best performer');
+  const baseGenome = state.bestPerformer?.genome ?? randomGenome();
+  const genome = mutateGenome(baseGenome);
+  const velocityJitter = (Math.random() - 0.5) * 0.5;
+  const boid = createBoid({
+    vx: (state.bestPerformer?.vx ?? (Math.random() - 0.5) * genome.maxSpeed) + velocityJitter,
+    vy: (state.bestPerformer?.vy ?? (Math.random() - 0.5) * genome.maxSpeed) - velocityJitter,
+    genome,
+  });
+  log('Boid spawned from best performer', { genome });
   return boid;
 }
 
@@ -266,7 +297,7 @@ function shouldBoidDie(boid) {
 
 function step() {
   try {
-    const { maxSpeed, trail } = state.settings;
+    const { trail, speedMultiplier } = state.settings;
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     state.frame += 1;
@@ -289,7 +320,7 @@ function step() {
       boid.vx += ax;
       boid.vy += ay;
 
-      const limited = limitVector(boid.vx, boid.vy, maxSpeed);
+      const limited = limitVector(boid.vx, boid.vy, boid.genome.maxSpeed * speedMultiplier);
       boid.vx = limited.x;
       boid.vy = limited.y;
 
@@ -309,8 +340,7 @@ function step() {
         continue;
       }
 
-      const angle = Math.atan2(boid.vy, boid.vx);
-      drawBoid(boid.x, boid.y, angle);
+      drawBoid(boid);
       nextBoids.push(boid);
     }
 
@@ -322,57 +352,55 @@ function step() {
   requestAnimationFrame(step);
 }
 
-function handleControlChange(event) {
-  const { name, value } = event.target;
-  const parsed = parseFloat(value);
-  if (Number.isNaN(parsed)) return;
-
-  state.settings[name] = parsed;
-  if (name === 'boidCount') {
-    adjustBoidCount(Math.round(parsed));
-  }
-
-  const display = document.querySelector(`[data-display="${name}"]`);
-  const definition = controlDefinitions.find((c) => c.key === name);
-  if (display && definition) {
-    display.textContent = definition.format(parsed);
-  }
-  log('Control updated', { [name]: parsed });
-}
-
 function renderControls() {
   const container = document.querySelector('[data-control-panel]');
   if (!container) return;
 
-  const fragment = document.createDocumentFragment();
-  controlDefinitions.forEach((control) => {
-    const wrapper = document.createElement('label');
-    wrapper.className = 'slider';
-    wrapper.innerHTML = `
-      <div class="slider__header">
-        <span>${control.label}</span>
-        <span class="slider__value" data-display="${control.key}">${control.format(
-      state.settings[control.key],
-    )}</span>
+  try {
+    container.innerHTML = `
+      <div class="slider">
+        <div class="slider__header">
+          <label for="boid-count">Boid count</label>
+          <span class="slider__value" data-output="boidCount">${state.settings.boidCount}</span>
+        </div>
+        <input id="boid-count" type="range" min="60" max="780" step="10" value="${state.settings.boidCount}" data-control="boidCount" />
       </div>
-      <input
-        type="range"
-        name="${control.key}"
-        min="${control.min}"
-        max="${control.max}"
-        step="${control.step}"
-        value="${state.settings[control.key]}"
-        aria-label="${control.label}"
-      />
+      <div class="slider">
+        <div class="slider__header">
+          <label for="speed-scale">Simulation speed</label>
+          <span class="slider__value" data-output="speedMultiplier">${state.settings.speedMultiplier.toFixed(2)}×</span>
+        </div>
+        <input id="speed-scale" type="range" min="0.4" max="2.4" step="0.05" value="${state.settings.speedMultiplier}" data-control="speedMultiplier" />
+      </div>
+      <p>Parameters evolve automatically—watch colors shift as separation (red), cohesion (green), and alignment (blue) adapt.</p>
     `;
-    const input = wrapper.querySelector('input');
-    input.addEventListener('input', handleControlChange);
-    fragment.appendChild(wrapper);
-  });
 
-  container.innerHTML = '';
-  container.appendChild(fragment);
-  log('Controls rendered');
+    const boidInput = container.querySelector('[data-control="boidCount"]');
+    const speedInput = container.querySelector('[data-control="speedMultiplier"]');
+    const boidOutput = container.querySelector('[data-output="boidCount"]');
+    const speedOutput = container.querySelector('[data-output="speedMultiplier"]');
+
+    boidInput?.addEventListener('input', (event) => {
+      const value = Number.parseInt(event.target.value, 10);
+      if (Number.isNaN(value)) return;
+      state.settings.boidCount = value;
+      boidOutput.textContent = value;
+      adjustBoidCount(value);
+      log('Boid count changed', { value });
+    });
+
+    speedInput?.addEventListener('input', (event) => {
+      const value = Number.parseFloat(event.target.value);
+      if (Number.isNaN(value)) return;
+      state.settings.speedMultiplier = value;
+      speedOutput.textContent = `${value.toFixed(2)}×`;
+      log('Speed multiplier changed', { value });
+    });
+
+    log('Control panel rendered');
+  } catch (error) {
+    console.error('[boids] Failed to render controls', error);
+  }
 }
 
 function start() {
