@@ -273,20 +273,24 @@ function steerBoid(boid, index) {
   const { maxSpeed } = boid.genome;
   const { aggressionThreshold } = state.settings;
 
-  let total = 0;
   let aggressiveNeighborCount = 0;
+  let separationCount = 0;
+  let packCount = 0;
   let steerSeparation = { x: 0, y: 0 };
   let steerAlignment = { x: 0, y: 0 };
   let steerCohesion = { x: 0, y: 0 };
+  let preyTarget = null;
 
   const isBoidPeaceful = boid.aggression <= aggressionThreshold;
 
-  state.boids.forEach((other, i) => {
-    if (i === index) return;
-    const dx = other.x - boid.x;
-    const dy = other.y - boid.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > 0 && dist < perception) {
+  try {
+    state.boids.forEach((other, i) => {
+      if (i === index) return;
+      const dx = other.x - boid.x;
+      const dy = other.y - boid.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= 0 || dist >= perception) return;
+
       const invDist = 1 / dist;
       const isOtherAggressive = other.aggression > aggressionThreshold;
       const separationScale = isBoidPeaceful && isOtherAggressive ? PEACEFUL_AGGRESSIVE_SEPARATION_BOOST : 1;
@@ -297,30 +301,36 @@ function steerBoid(boid, index) {
 
       steerSeparation.x -= dx * invDist * separationScale;
       steerSeparation.y -= dy * invDist * separationScale;
+      separationCount += 1;
 
-      steerAlignment.x += other.vx;
-      steerAlignment.y += other.vy;
+      const shouldPackWithOther = isBoidPeaceful || isOtherAggressive;
+      if (shouldPackWithOther) {
+        steerAlignment.x += other.vx;
+        steerAlignment.y += other.vy;
 
-      steerCohesion.x += other.x;
-      steerCohesion.y += other.y;
-      total += 1;
-    }
-  });
+        steerCohesion.x += other.x;
+        steerCohesion.y += other.y;
+        packCount += 1;
+      }
 
-  if (total > 0) {
-    steerSeparation = limitVector(steerSeparation.x / total, steerSeparation.y / total, maxForce);
+      if (!isBoidPeaceful && !isOtherAggressive) {
+        if (!preyTarget || dist < preyTarget.dist) {
+          preyTarget = { dx, dy, dist };
+        }
+      }
+    });
+  } catch (error) {
+    console.error('[boids] Failed to steer with neighbors', error);
+  }
 
-    steerAlignment = limitVector(
-      steerAlignment.x / total - boid.vx,
-      steerAlignment.y / total - boid.vy,
-      maxForce,
-    );
+  if (separationCount > 0) {
+    steerSeparation = limitVector(steerSeparation.x / separationCount, steerSeparation.y / separationCount, maxForce);
+  }
 
-    steerCohesion = limitVector(
-      steerCohesion.x / total - boid.x,
-      steerCohesion.y / total - boid.y,
-      maxForce,
-    );
+  if (packCount > 0) {
+    steerAlignment = limitVector(steerAlignment.x / packCount - boid.vx, steerAlignment.y / packCount - boid.vy, maxForce);
+
+    steerCohesion = limitVector(steerCohesion.x / packCount - boid.x, steerCohesion.y / packCount - boid.y, maxForce);
   }
 
   const ax =
@@ -332,8 +342,19 @@ function steerBoid(boid, index) {
     steerAlignment.y * alignmentWeight +
     steerCohesion.y * cohesionWeight;
 
-  const limited = limitVector(ax, ay, maxForce);
-  return { ...limited, neighborCount: total, aggressiveNeighborCount };
+  const preyHunt = (() => {
+    if (!preyTarget) return { x: 0, y: 0 };
+    const desiredX = preyTarget.dx / preyTarget.dist;
+    const desiredY = preyTarget.dy / preyTarget.dist;
+    return limitVector(desiredX, desiredY, maxForce);
+  })();
+
+  const limited = limitVector(ax + preyHunt.x, ay + preyHunt.y, maxForce);
+  return {
+    ...limited,
+    neighborCount: separationCount,
+    aggressiveNeighborCount,
+  };
 }
 
 function countNeighbors(targetIndex) {
