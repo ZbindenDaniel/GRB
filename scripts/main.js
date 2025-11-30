@@ -24,7 +24,7 @@ const state = {
     foodSpawnPerMinute: 200,
     foodRespawnDelaySeconds: 0,
     foodDecayRate: 0.002,
-    foodReward: 1.2,
+    foodReward: 2,
     foodDepletionOnEat: 0.5,
     foodConsumptionPerSecond: 0.005,
     initialEnergy: 100,
@@ -33,7 +33,7 @@ const state = {
     mutationRate: 0.26,
     mutationScale: 0.22,
     aggressionThreshold: 0.25,
-    aggressionEnergyBonus: 0.6,
+    aggressionEnergyBonus: 2.2,
     peacefulFoodForReproduction: 1,
     aggressiveFoodForReproduction: 1.2,
     peacefulReproductionCost: 0.55,
@@ -688,7 +688,7 @@ function tryAggressiveAttack(boid, index, eliminated) {
   if (boid.aggression <= aggressionThreshold) return;
 
   try {
-    const attackRadius = Math.max(10, boid.genome.perception * 0.22);
+    const attackRadius = Math.max(10, boid.genome.perception * (1 + boid.aggression));
     let targetIndex = -1;
     let closestDistance = Number.POSITIVE_INFINITY;
     let targetNeighborCount = 0;
@@ -713,7 +713,7 @@ function tryAggressiveAttack(boid, index, eliminated) {
 
     const target = state.boids[targetIndex];
     eliminated.add(targetIndex);
-    const bite = foodReward * boid.aggression + aggressionEnergyBonus;
+    const bite = foodReward * aggressionEnergyBonus;
     boid.energy += bite;
     boid.score += bite;
     boid.foodCollected += bite / foodReward;
