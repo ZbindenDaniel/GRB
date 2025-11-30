@@ -48,6 +48,8 @@ const log = (message, extra = {}) => {
 };
 
 const PEACEFUL_AGGRESSIVE_SEPARATION_BOOST = 2.2;
+const AGGRESSION_ATTACK_BOOST_DURATION = 1.8;
+const AGGRESSION_ATTACK_BOOST_SPEED = 0.2;
 
 function foodNeedMultiplier(boid) {
   try {
@@ -156,6 +158,7 @@ function createBoid(base = {}) {
     foodCollected: 0,
     lastNeighborCount: 0,
     lastReproductionFrame: -Infinity,
+    attackBoostTimer: 0,
     genome,
     color: deriveBoidColor(genome),
     aggression: deriveAggression(genome),
@@ -532,18 +535,19 @@ function tickFoodRespawn(deltaSeconds) {
 
 function tickFoodSpawn(deltaSeconds) {
   try {
+    const activeFoodCount = state.foods.reduce((count, food) => (food.value > 0 ? count + 1 : count), 0);
     const spawnPerMinute = Math.max(0, state.settings.foodSpawnPerMinute);
     const spawnPerSecond = spawnPerMinute / 60;
     const safeDelta = Math.max(0, deltaSeconds);
     state.foodSpawnAccumulator += spawnPerSecond * safeDelta;
 
     const maxFood = Math.max(state.settings.foodCount, Math.ceil(spawnPerMinute * 2));
-    if (state.foods.length >= maxFood) {
+    if (activeFoodCount >= maxFood) {
       state.foodSpawnAccumulator = 0;
       return;
     }
 
-    const toSpawn = Math.min(Math.floor(state.foodSpawnAccumulator), maxFood - state.foods.length);
+    const toSpawn = Math.min(Math.floor(state.foodSpawnAccumulator), maxFood - activeFoodCount);
     if (toSpawn <= 0) return;
 
     state.foodSpawnAccumulator -= toSpawn;
@@ -606,6 +610,7 @@ function tryAggressiveAttack(boid, index, eliminated) {
     const bite = foodReward * boid.aggression + aggressionEnergyBonus;
     boid.energy += bite;
     boid.score += bite;
+    boid.attackBoostTimer = Math.max(boid.attackBoostTimer ?? 0, AGGRESSION_ATTACK_BOOST_DURATION);
     trackBestPerformer(boid);
     log('Aggressive attack executed', {
       attacker: index,
@@ -755,6 +760,7 @@ function step(timestamp) {
         continue;
       }
       const boid = state.boids[index];
+      boid.attackBoostTimer = Math.max(0, (boid.attackBoostTimer ?? 0) - deltaSeconds);
       const { x, y } = boid;
       const { x: ax, y: ay, neighborCount } = steerBoid(boid, index);
       const { x: foodAx, y: foodAy } = steerToFood(boid);
@@ -763,7 +769,9 @@ function step(timestamp) {
       boid.vx += ax + foodAx;
       boid.vy += ay + foodAy;
 
-      const limited = limitVector(boid.vx, boid.vy, boid.genome.maxSpeed * speedMultiplier);
+      const attackBoostScale = boid.attackBoostTimer > 0 ? 1 + AGGRESSION_ATTACK_BOOST_SPEED : 1;
+      const maxSpeed = boid.genome.maxSpeed * speedMultiplier * attackBoostScale;
+      const limited = limitVector(boid.vx, boid.vy, maxSpeed);
       boid.vx = limited.x;
       boid.vy = limited.y;
 
@@ -912,6 +920,10 @@ function start() {
     updateBestPerformerPanel();
     log('Peaceful-aggressive separation boost active', {
       multiplier: PEACEFUL_AGGRESSIVE_SEPARATION_BOOST,
+    });
+    log('Aggression attack boost configured', {
+      durationSeconds: AGGRESSION_ATTACK_BOOST_DURATION,
+      speedBonusMultiplier: 1 + AGGRESSION_ATTACK_BOOST_SPEED,
     });
     ctx.fillStyle = 'rgba(10, 13, 18, 1)';
     ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
