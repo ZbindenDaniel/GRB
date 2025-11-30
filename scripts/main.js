@@ -17,6 +17,7 @@ const state = {
   settings: {
     boidCount: 420,
     trail: 0.08,
+    speedMultiplier: 1,
     foodCount: 36,
     foodDecayRate: 0.002,
     foodReward: 1.2,
@@ -296,7 +297,7 @@ function shouldBoidDie(boid) {
 
 function step() {
   try {
-    const { trail } = state.settings;
+    const { trail, speedMultiplier } = state.settings;
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     state.frame += 1;
@@ -319,7 +320,7 @@ function step() {
       boid.vx += ax;
       boid.vy += ay;
 
-      const limited = limitVector(boid.vx, boid.vy, boid.genome.maxSpeed);
+      const limited = limitVector(boid.vx, boid.vy, boid.genome.maxSpeed * speedMultiplier);
       boid.vx = limited.x;
       boid.vy = limited.y;
 
@@ -355,8 +356,51 @@ function renderControls() {
   const container = document.querySelector('[data-control-panel]');
   if (!container) return;
 
-  container.textContent = 'Parameters evolve automatically—watch colors shift as separation (red), cohesion (green), and alignment (blue) adapt.';
-  log('Evolution notice rendered');
+  try {
+    container.innerHTML = `
+      <div class="slider">
+        <div class="slider__header">
+          <label for="boid-count">Boid count</label>
+          <span class="slider__value" data-output="boidCount">${state.settings.boidCount}</span>
+        </div>
+        <input id="boid-count" type="range" min="60" max="780" step="10" value="${state.settings.boidCount}" data-control="boidCount" />
+      </div>
+      <div class="slider">
+        <div class="slider__header">
+          <label for="speed-scale">Simulation speed</label>
+          <span class="slider__value" data-output="speedMultiplier">${state.settings.speedMultiplier.toFixed(2)}×</span>
+        </div>
+        <input id="speed-scale" type="range" min="0.4" max="2.4" step="0.05" value="${state.settings.speedMultiplier}" data-control="speedMultiplier" />
+      </div>
+      <p>Parameters evolve automatically—watch colors shift as separation (red), cohesion (green), and alignment (blue) adapt.</p>
+    `;
+
+    const boidInput = container.querySelector('[data-control="boidCount"]');
+    const speedInput = container.querySelector('[data-control="speedMultiplier"]');
+    const boidOutput = container.querySelector('[data-output="boidCount"]');
+    const speedOutput = container.querySelector('[data-output="speedMultiplier"]');
+
+    boidInput?.addEventListener('input', (event) => {
+      const value = Number.parseInt(event.target.value, 10);
+      if (Number.isNaN(value)) return;
+      state.settings.boidCount = value;
+      boidOutput.textContent = value;
+      adjustBoidCount(value);
+      log('Boid count changed', { value });
+    });
+
+    speedInput?.addEventListener('input', (event) => {
+      const value = Number.parseFloat(event.target.value);
+      if (Number.isNaN(value)) return;
+      state.settings.speedMultiplier = value;
+      speedOutput.textContent = `${value.toFixed(2)}×`;
+      log('Speed multiplier changed', { value });
+    });
+
+    log('Control panel rendered');
+  } catch (error) {
+    console.error('[boids] Failed to render controls', error);
+  }
 }
 
 function start() {
