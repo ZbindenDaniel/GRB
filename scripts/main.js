@@ -33,7 +33,8 @@ const state = {
     aggressionEnergyBonus: 0.4,
     peacefulReproductionEnergy: 1.35,
     peacefulReproductionCost: 0.55,
-    peacefulReproductionCooldown: 180,
+    foodForReproduction: 2.4,
+    aggressiveReproductionFoodMultiplier: 1.6,
   },
   frame: 0,
 };
@@ -129,6 +130,7 @@ function createBoid(base = {}) {
     vy: limited.y,
     energy: initialEnergy,
     score: 0,
+    foodCollected: 0,
     lastNeighborCount: 0,
     lastReproductionFrame: -Infinity,
     genome,
@@ -382,7 +384,7 @@ function updateBestPerformerPanel() {
       return;
     }
 
-    const { genome, score } = state.bestPerformer;
+    const { genome, foodCollected } = state.bestPerformer;
     const rows = Object.entries(genome)
       .map(
         ([key, value]) => `
@@ -395,8 +397,8 @@ function updateBestPerformerPanel() {
 
     container.innerHTML = `
       <div class="best__summary">
-        <span class="best__score-label">Top score</span>
-        <span class="best__score">${score.toFixed(2)}</span>
+        <span class="best__score-label">Top forager</span>
+        <span class="best__score">${foodCollected.toFixed(2)}</span>
       </div>
       <div class="best__grid">${rows}</div>
     `;
@@ -406,9 +408,18 @@ function updateBestPerformerPanel() {
 }
 
 function trackBestPerformer(boid) {
-  if (!state.bestPerformer || boid.score > state.bestPerformer.score) {
-    state.bestPerformer = { vx: boid.vx, vy: boid.vy, score: boid.score, genome: boid.genome };
-    log('Best performer updated', { score: boid.score.toFixed(2), genome: boid.genome });
+  if (!state.bestPerformer || boid.foodCollected > state.bestPerformer.foodCollected) {
+    state.bestPerformer = {
+      vx: boid.vx,
+      vy: boid.vy,
+      score: boid.score,
+      foodCollected: boid.foodCollected,
+      genome: boid.genome,
+    };
+    log('Best forager updated', {
+      foodCollected: boid.foodCollected.toFixed(2),
+      genome: boid.genome,
+    });
     updateBestPerformerPanel();
   }
 }
@@ -417,6 +428,7 @@ function tryConsumeFood(boid) {
   const { foodReward, foodDepletionOnEat } = state.settings;
   const { foodPerception } = boid.genome;
   let reward = 0;
+  let consumed = 0;
   const eatRadius = Math.max(6, Math.min(16, foodPerception * 0.12));
   state.foods = state.foods.map((food) => {
     const dx = food.x - boid.x;
@@ -425,6 +437,7 @@ function tryConsumeFood(boid) {
     if (dist < eatRadius && food.value > 0.05) {
       const bite = Math.min(food.value, foodDepletionOnEat);
       reward += bite * foodReward;
+      consumed += bite;
       const remaining = food.value - bite;
       if (remaining <= 0.02) {
         return createFood();
@@ -437,6 +450,7 @@ function tryConsumeFood(boid) {
   if (reward > 0) {
     boid.energy += reward;
     boid.score += reward;
+    boid.foodCollected += consumed;
     trackBestPerformer(boid);
   }
 }
@@ -486,20 +500,22 @@ function tryAggressiveAttack(boid, index, eliminated) {
   }
 }
 
-function tryPeacefulReproduction(boid, nextBoids) {
+function tryFoodBasedReproduction(boid, nextBoids) {
   const {
     aggressionThreshold,
     peacefulReproductionEnergy,
     peacefulReproductionCost,
-    peacefulReproductionCooldown,
+    foodForReproduction,
+    aggressiveReproductionFoodMultiplier,
   } = state.settings;
 
-  if (boid.aggression > aggressionThreshold) return;
-
   try {
+    const aggressionMultiplier = boid.aggression > aggressionThreshold ? aggressiveReproductionFoodMultiplier : 1;
+    const requiredFood = foodForReproduction * aggressionMultiplier;
+    const hasCollectedEnoughFood = boid.foodCollected >= requiredFood;
     const hasEnergyForOffspring = boid.energy >= peacefulReproductionEnergy + peacefulReproductionCost;
-    const isOffCooldown = state.frame - boid.lastReproductionFrame >= peacefulReproductionCooldown;
-    if (!hasEnergyForOffspring || !isOffCooldown) return;
+
+    if (!hasCollectedEnoughFood || !hasEnergyForOffspring) return;
 
     const offspring = createBoid({
       x: boid.x + (Math.random() - 0.5) * 8,
@@ -508,15 +524,18 @@ function tryPeacefulReproduction(boid, nextBoids) {
     });
 
     boid.energy -= peacefulReproductionCost;
+    boid.foodCollected -= requiredFood;
     boid.lastReproductionFrame = state.frame;
     nextBoids.push(offspring);
-    log('Peaceful reproduction triggered', {
+    log('Food-based reproduction triggered', {
       frame: state.frame,
       parentEnergy: boid.energy.toFixed(2),
+      parentFoodCollected: boid.foodCollected.toFixed(2),
+      requiredFood: requiredFood.toFixed(2),
       offspringAggression: offspring.aggression.toFixed(2),
     });
   } catch (error) {
-    console.error('[boids] Failed peaceful reproduction', error);
+    console.error('[boids] Failed food-based reproduction', error);
   }
 }
 
@@ -593,7 +612,7 @@ function step() {
       else if (boid.y > h) boid.y = 0;
 
       tryConsumeFood(boid);
-      tryPeacefulReproduction(boid, nextBoids);
+      tryFoodBasedReproduction(boid, nextBoids);
       tryAggressiveAttack(boid, index, eliminated);
 
       if (shouldBoidDie(boid)) {
