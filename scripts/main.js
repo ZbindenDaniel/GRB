@@ -259,8 +259,8 @@ function steerToFood(boid) {
 
     if (!target) return { x: 0, y: 0 };
 
-    const desiredX = target.dx / target.dist;
-    const desiredY = target.dy / target.dist;
+    const desiredX = target.x // target.dx / target.dist;
+    const desiredY = target.y //target.dy / target.dist;
     return limitVector(desiredX, desiredY, maxForce);
   } catch (error) {
     console.error('[boids] Failed to steer toward food', error);
