@@ -48,8 +48,8 @@ const log = (message, extra = {}) => {
 };
 
 const PEACEFUL_AGGRESSIVE_SEPARATION_BOOST = 2.2;
-const AGGRESSION_ATTACK_BOOST_DURATION = 1.8;
-const AGGRESSION_ATTACK_BOOST_SPEED = 0.2;
+const AGGRESSION_ATTACK_RECOVERY_DURATION = 1.8;
+const AGGRESSION_ATTACK_SPEED_BREAK = 0.22;
 
 function foodNeedMultiplier(boid) {
   try {
@@ -158,7 +158,7 @@ function createBoid(base = {}) {
     foodCollected: 0,
     lastNeighborCount: 0,
     lastReproductionFrame: -Infinity,
-    attackBoostTimer: 0,
+    attackRecoveryTimer: 0,
     genome,
     color: deriveBoidColor(genome),
     aggression: deriveAggression(genome),
@@ -610,13 +610,17 @@ function tryAggressiveAttack(boid, index, eliminated) {
     const bite = foodReward * boid.aggression + aggressionEnergyBonus;
     boid.energy += bite;
     boid.score += bite;
-    boid.attackBoostTimer = Math.max(boid.attackBoostTimer ?? 0, AGGRESSION_ATTACK_BOOST_DURATION);
+    boid.attackRecoveryTimer = Math.max(
+      boid.attackRecoveryTimer ?? 0,
+      AGGRESSION_ATTACK_RECOVERY_DURATION,
+    );
     trackBestPerformer(boid);
     log('Aggressive attack executed', {
       attacker: index,
       target: targetIndex,
       aggression: boid.aggression.toFixed(2),
       targetNeighbors: targetNeighborCount,
+      speedBreak: AGGRESSION_ATTACK_SPEED_BREAK,
     });
   } catch (error) {
     console.error('[boids] Failed aggression handling', error);
@@ -760,7 +764,7 @@ function step(timestamp) {
         continue;
       }
       const boid = state.boids[index];
-      boid.attackBoostTimer = Math.max(0, (boid.attackBoostTimer ?? 0) - deltaSeconds);
+      boid.attackRecoveryTimer = Math.max(0, (boid.attackRecoveryTimer ?? 0) - deltaSeconds);
       const { x, y } = boid;
       const { x: ax, y: ay, neighborCount } = steerBoid(boid, index);
       const { x: foodAx, y: foodAy } = steerToFood(boid);
@@ -769,8 +773,8 @@ function step(timestamp) {
       boid.vx += ax + foodAx;
       boid.vy += ay + foodAy;
 
-      const attackBoostScale = boid.attackBoostTimer > 0 ? 1 + AGGRESSION_ATTACK_BOOST_SPEED : 1;
-      const maxSpeed = boid.genome.maxSpeed * speedMultiplier * attackBoostScale;
+      const attackRecoveryScale = boid.attackRecoveryTimer > 0 ? 1 - AGGRESSION_ATTACK_SPEED_BREAK : 1;
+      const maxSpeed = boid.genome.maxSpeed * speedMultiplier * attackRecoveryScale;
       const limited = limitVector(boid.vx, boid.vy, maxSpeed);
       boid.vx = limited.x;
       boid.vy = limited.y;
@@ -921,9 +925,9 @@ function start() {
     log('Peaceful-aggressive separation boost active', {
       multiplier: PEACEFUL_AGGRESSIVE_SEPARATION_BOOST,
     });
-    log('Aggression attack boost configured', {
-      durationSeconds: AGGRESSION_ATTACK_BOOST_DURATION,
-      speedBonusMultiplier: 1 + AGGRESSION_ATTACK_BOOST_SPEED,
+    log('Aggression recovery speed break configured', {
+      durationSeconds: AGGRESSION_ATTACK_RECOVERY_DURATION,
+      speedMultiplier: 1 - AGGRESSION_ATTACK_SPEED_BREAK,
     });
     ctx.fillStyle = 'rgba(10, 13, 18, 1)';
     ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
