@@ -32,6 +32,9 @@ const state = {
     mutationScale: 0.18,
     aggressionThreshold: 0.18,
     aggressionEnergyBonus: 0.4,
+    peacefulReproductionEnergy: 1.35,
+    peacefulReproductionCost: 0.55,
+    peacefulReproductionCooldown: 180,
   },
   frame: 0,
 };
@@ -158,6 +161,7 @@ function createBoid(base = {}) {
     energy: initialEnergy,
     score: 0,
     lastNeighborCount: 0,
+    lastReproductionFrame: -Infinity,
     genome,
     color: deriveBoidColor(genome),
     aggression: deriveAggression(genome),
@@ -275,6 +279,31 @@ function steerBoid(boid, index) {
 
   const limited = limitVector(ax, ay, maxForce);
   return { ...limited, neighborCount: total };
+}
+
+function countNeighbors(targetIndex) {
+  const target = state.boids[targetIndex];
+  if (!target) return 0;
+
+  try {
+    let total = 0;
+    const { perception } = target.genome;
+
+    state.boids.forEach((other, index) => {
+      if (index === targetIndex) return;
+      const dx = other.x - target.x;
+      const dy = other.y - target.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0 && dist < perception) {
+        total += 1;
+      }
+    });
+
+    return total;
+  } catch (error) {
+    console.error('[boids] Failed to count neighbors', error);
+    return 0;
+  }
 }
 
 function drawBoid(boid) {
@@ -445,6 +474,7 @@ function tryAggressiveAttack(boid, index, eliminated) {
     const attackRadius = Math.max(10, boid.genome.perception * 0.22);
     let targetIndex = -1;
     let closestDistance = Number.POSITIVE_INFINITY;
+    let targetNeighborCount = 0;
 
     for (let i = index + 1; i < state.boids.length; i += 1) {
       if (i === index || eliminated.has(i)) continue;
@@ -452,9 +482,13 @@ function tryAggressiveAttack(boid, index, eliminated) {
       const dx = target.x - boid.x;
       const dy = target.y - boid.y;
       const dist = Math.hypot(dx, dy);
-      if (dist > 0 && dist < attackRadius && dist < closestDistance) {
+      if (dist <= 0 || dist >= attackRadius || dist >= closestDistance) continue;
+
+      const neighborCount = countNeighbors(i);
+      if (neighborCount < state.settings.minNeighborsForSafety) {
         closestDistance = dist;
         targetIndex = i;
+        targetNeighborCount = neighborCount;
       }
     }
 
@@ -472,9 +506,44 @@ function tryAggressiveAttack(boid, index, eliminated) {
       attacker: index,
       target: targetIndex,
       aggression: boid.aggression.toFixed(2),
+      targetNeighbors: targetNeighborCount,
     });
   } catch (error) {
     console.error('[boids] Failed aggression handling', error);
+  }
+}
+
+function tryPeacefulReproduction(boid, nextBoids) {
+  const {
+    aggressionThreshold,
+    peacefulReproductionEnergy,
+    peacefulReproductionCost,
+    peacefulReproductionCooldown,
+  } = state.settings;
+
+  if (boid.aggression > aggressionThreshold) return;
+
+  try {
+    const hasEnergyForOffspring = boid.energy >= peacefulReproductionEnergy + peacefulReproductionCost;
+    const isOffCooldown = state.frame - boid.lastReproductionFrame >= peacefulReproductionCooldown;
+    if (!hasEnergyForOffspring || !isOffCooldown) return;
+
+    const offspring = createBoid({
+      x: boid.x + (Math.random() - 0.5) * 8,
+      y: boid.y + (Math.random() - 0.5) * 8,
+      genome: mutateGenome(boid.genome),
+    });
+
+    boid.energy -= peacefulReproductionCost;
+    boid.lastReproductionFrame = state.frame;
+    nextBoids.push(offspring);
+    log('Peaceful reproduction triggered', {
+      frame: state.frame,
+      parentEnergy: boid.energy.toFixed(2),
+      offspringAggression: offspring.aggression.toFixed(2),
+    });
+  } catch (error) {
+    console.error('[boids] Failed peaceful reproduction', error);
   }
 }
 
@@ -551,6 +620,7 @@ function step() {
       else if (boid.y > h) boid.y = 0;
 
       tryConsumeFood(boid);
+      tryPeacefulReproduction(boid, nextBoids);
       tryAggressiveAttack(boid, index, eliminated);
 
       if (shouldBoidDie(boid)) {
