@@ -15,6 +15,7 @@ const state = {
   boids: [],
   foods: [],
   bestPerformer: null,
+  pendingFoodSpawns: [],
   settings: {
     boidCount: 420,
     trail: 0.08,
@@ -52,23 +53,39 @@ function normalized(value, min, max) {
 }
 
 function randomGenome() {
-  return Object.fromEntries(
+  const genome = Object.fromEntries(
     Object.entries(genomeRanges).map(([key, range]) => [key, range.min + Math.random() * (range.max - range.min)]),
   );
+  return applyFoodCohesionTradeoff(genome);
+}
+
+function applyFoodCohesionTradeoff(genome) {
+  const normalizedFoodPerception = normalized(
+    genome.foodPerception,
+    genomeRanges.foodPerception.min,
+    genomeRanges.foodPerception.max,
+  );
+  const complementaryCohesion =
+    genomeRanges.cohesionWeight.min +
+    (1 - normalizedFoodPerception) * (genomeRanges.cohesionWeight.max - genomeRanges.cohesionWeight.min);
+  const adjustedCohesion = (genome.cohesionWeight + complementaryCohesion) / 2;
+  return { ...genome, cohesionWeight: adjustedCohesion };
 }
 
 function mutateGenome(baseGenome) {
   const { mutationRate, mutationScale } = state.settings;
-  return Object.fromEntries(
+  const mutated = Object.fromEntries(
     Object.entries(genomeRanges).map(([key, range]) => {
       const original = baseGenome[key];
       const shouldMutate = Math.random() < mutationRate;
       const magnitude = shouldMutate ? 1 + (Math.random() * 2 - 1) * mutationScale : 1;
-      const mutated = original * magnitude;
-      const clamped = Math.min(range.max, Math.max(range.min, mutated));
+      const mutatedValue = original * magnitude;
+      const clamped = Math.min(range.max, Math.max(range.min, mutatedValue));
       return [key, clamped];
     }),
   );
+
+  return applyFoodCohesionTradeoff(mutated);
 }
 
 function deriveBoidColor(genome) {
@@ -78,6 +95,38 @@ function deriveBoidColor(genome) {
   return `rgba(${r}, ${g}, ${b}, 0.9)`;
 }
 
+function queueFoodSpawn(position) {
+  if (!position) return;
+  state.pendingFoodSpawns.push(position);
+  log('Food spawn queued from death', position);
+}
+
+function spawnDeathFood(position) {
+  try {
+    queueFoodSpawn(position);
+    const nextFood = createFood();
+
+    if (state.foods.length === 0) {
+      state.foods.push(nextFood);
+      return;
+    }
+
+    if (state.foods.length >= state.settings.foodCount) {
+      let weakestIndex = 0;
+      for (let i = 1; i < state.foods.length; i += 1) {
+        if (state.foods[i].value < state.foods[weakestIndex].value) {
+          weakestIndex = i;
+        }
+      }
+      state.foods[weakestIndex] = nextFood;
+    } else {
+      state.foods.push(nextFood);
+    }
+  } catch (error) {
+    console.error('[boids] Failed to spawn death food', error);
+  }
+}
+
 function createBoid(base = {}) {
   const { initialEnergy } = state.settings;
   const genome = base.genome ?? randomGenome();
@@ -85,8 +134,8 @@ function createBoid(base = {}) {
   const nextVy = base.vy ?? (Math.random() - 0.5) * genome.maxSpeed;
   const limited = limitVector(nextVx, nextVy, genome.maxSpeed);
   return {
-    x: Math.random() * canvas.clientWidth,
-    y: Math.random() * canvas.clientHeight,
+    x: base.x ?? Math.random() * canvas.clientWidth,
+    y: base.y ?? Math.random() * canvas.clientHeight,
     vx: limited.x,
     vy: limited.y,
     energy: initialEnergy,
@@ -226,10 +275,14 @@ function drawBoid(boid) {
   ctx.restore();
 }
 
-function createFood() {
-  return {
+function createFood(position) {
+  const fallbackPosition = position ?? state.pendingFoodSpawns.shift();
+  const location = fallbackPosition ?? {
     x: Math.random() * canvas.clientWidth,
     y: Math.random() * canvas.clientHeight,
+  };
+  return {
+    ...location,
     value: 1,
   };
 }
@@ -279,10 +332,44 @@ function drawFood(food) {
   ctx.restore();
 }
 
+function updateBestPerformerPanel() {
+  const container = document.querySelector('[data-best-performer]');
+  if (!container) return;
+
+  try {
+    if (!state.bestPerformer) {
+      container.innerHTML = '<p class="best__empty">No top genome yet—let them evolve.</p>';
+      return;
+    }
+
+    const { genome, score } = state.bestPerformer;
+    const rows = Object.entries(genome)
+      .map(
+        ([key, value]) => `
+          <div class="best__row">
+            <span class="best__label">${key}</span>
+            <span class="best__value">${value.toFixed(2)}</span>
+          </div>`,
+      )
+      .join('');
+
+    container.innerHTML = `
+      <div class="best__summary">
+        <span class="best__score-label">Top score</span>
+        <span class="best__score">${score.toFixed(2)}</span>
+      </div>
+      <div class="best__grid">${rows}</div>
+    `;
+  } catch (error) {
+    console.error('[boids] Failed to render best performer', error);
+  }
+}
+
 function trackBestPerformer(boid) {
   if (!state.bestPerformer || boid.score > state.bestPerformer.score) {
     state.bestPerformer = { vx: boid.vx, vy: boid.vy, score: boid.score, genome: boid.genome };
     log('Best performer updated', { score: boid.score.toFixed(2), genome: boid.genome });
+    updateBestPerformerPanel();
   }
 }
 
@@ -384,6 +471,7 @@ function step() {
       tryConsumeFood(boid);
 
       if (shouldBoidDie(boid)) {
+        spawnDeathFood({ x, y });
         log('Boid removed', { frame: state.frame, score: boid.score.toFixed(2) });
         nextBoids.push(spawnFromBest());
         continue;
@@ -479,6 +567,7 @@ function start() {
     seedBoids();
     seedFood();
     renderControls();
+    updateBestPerformerPanel();
     ctx.fillStyle = 'rgba(10, 13, 18, 1)';
     ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
     requestAnimationFrame(step);

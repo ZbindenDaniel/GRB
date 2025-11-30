@@ -75,6 +75,76 @@ main.layout {
   margin-top: 18px;
 }
 
+.best {
+  margin-top: 18px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+.best__title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.best__content {
+  display: grid;
+  gap: 10px;
+}
+
+.best__summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.best__score-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.best__score {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.best__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.best__row {
+  display: flex;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.best__label {
+  color: var(--muted);
+  font-variant: small-caps;
+}
+
+.best__value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.best__empty {
+  margin: 0;
+  color: var(--muted);
+}
+
 .slider {
   display: flex;
   flex-direction: column;
