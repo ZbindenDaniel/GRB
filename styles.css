@@ -147,7 +147,7 @@ main.layout {
   color: var(--muted);
 }
 
-.slider {
+.control {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -157,7 +157,7 @@ main.layout {
   border-radius: 10px;
 }
 
-.slider__header {
+.control__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -165,15 +165,59 @@ main.layout {
   font-size: 14px;
 }
 
-.slider__value {
+.control__value {
   color: var(--accent);
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
 
-.slider input[type='range'] {
+.control__input {
   width: 100%;
-  accent-color: var(--accent);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.control__input:focus {
+  outline: 2px solid rgba(110, 199, 255, 0.6);
+  border-color: rgba(110, 199, 255, 0.8);
+  box-shadow: 0 0 0 3px rgba(110, 199, 255, 0.15);
+}
+
+.control--actions {
+  gap: 12px;
+}
+
+.control__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: linear-gradient(120deg, rgba(110, 199, 255, 0.2), rgba(110, 199, 255, 0.05));
+  color: var(--text);
+  font: inherit;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(110, 199, 255, 0.5);
+  box-shadow: 0 10px 26px rgba(110, 199, 255, 0.12);
+}
+
+.button:active {
+  transform: translateY(0);
+  box-shadow: none;
 }
 
 .canvas-panel {
